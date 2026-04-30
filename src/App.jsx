@@ -222,6 +222,7 @@ export default function ClassPlannerApp() {
   const [draggingId, setDraggingId] = useState(null);
   const [autoEditId, setAutoEditId] = useState(null);
   const stateRef = useRef(null);
+  const hashStudent = window.location.hash === '#student';
 
   useEffect(() => {
     (async () => {
@@ -229,6 +230,7 @@ export default function ClassPlannerApp() {
       const init = saved || freshDemoState();
       // back-compat for older saves
       if (!init.pendingCreations) init.pendingCreations = [];
+      if (hashStudent) init.studentView = true;
       setState(init);
       setLoaded(true);
     })();
@@ -590,10 +592,12 @@ export default function ClassPlannerApp() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <ToggleButton active={isStudent} onClick={() => updateState((s) => { s.studentView = !s.studentView; return s; })}>
-                {isStudent ? <Eye size={14} /> : <EyeOff size={14} />}
-                {isStudent ? 'Student' : 'Editor'}
-              </ToggleButton>
+              {!hashStudent && (
+                <ToggleButton active={isStudent} onClick={() => updateState((s) => { s.studentView = !s.studentView; return s; })}>
+                  {isStudent ? <Eye size={14} /> : <EyeOff size={14} />}
+                  {isStudent ? 'Student' : 'Editor'}
+                </ToggleButton>
+              )}
               {!isStudent && (
                 <>
                   <IconButton onClick={() => setShowCanvas((v) => !v)} title="Canvas connection">
@@ -1276,13 +1280,15 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onClose }) {
             </>
           )}
         </div>
-        <div style={{ marginTop: 14, padding: 10, background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 3, fontSize: '12px', color: T.muted, display: 'flex', gap: 8 }}>
-          <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-          <span>
-            In this preview, Canvas API calls are blocked by browser CORS. Once hosted on
-            your own domain and embedded in Canvas, connect/refresh/sync work normally.
-          </span>
-        </div>
+        {!state.canvas.connected && (
+          <div style={{ marginTop: 14, padding: 10, background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 3, fontSize: '12px', color: T.muted, display: 'flex', gap: 8 }}>
+            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>
+              If connecting fails, your browser may be blocking cross-origin requests (CORS).
+              Try a CORS-unblock extension or deploy a small CORS proxy.
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
