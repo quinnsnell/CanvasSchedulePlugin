@@ -280,6 +280,7 @@ export default function ClassPlannerApp() {
   const [toast, setToast] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const [autoEditId, setAutoEditId] = useState(null);
+  const [studentEmbed, setStudentEmbed] = useState(null);
   const stateRef = useRef(null);
   const hashStudent = window.location.hash === '#student';
 
@@ -483,8 +484,6 @@ export default function ClassPlannerApp() {
   };
 
   // ------ Publish / load schedule to Canvas course files ------
-  const [studentEmbed, setStudentEmbed] = useState(null);
-
   const publishToCanvas = async () => {
     const s = stateRef.current;
     if (!s?.canvas?.connected || !s.canvas.courseId) {
