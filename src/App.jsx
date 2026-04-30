@@ -3,7 +3,7 @@ import {
   Plus, X, FileText, GripVertical, Eye, EyeOff, Settings, RefreshCw,
   Trash2, AlertCircle, Check, BookOpen, Pencil, Bold, Italic,
   Link as LinkIcon, ExternalLink, Calendar, Info, Cloud, CloudOff,
-  ListPlus, CalendarPlus, MinusCircle, Hourglass
+  ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload, Download
 } from 'lucide-react';
 
 // ============================================================
@@ -145,6 +145,8 @@ async function canvasFetch(baseUrl, token, path, opts = {}) {
   }
   return res.json();
 }
+const SCHEDULE_FILENAME = 'schedule-planner.json';
+
 const CanvasAPI = {
   listCourses: (b, t) =>
     canvasFetch(b, t, '/courses?enrollment_type=teacher&state[]=available&per_page=100'),
@@ -155,6 +157,63 @@ const CanvasAPI = {
       method: 'PUT',
       body: JSON.stringify({ assignment: { due_at: dueAtISO } }),
     }),
+
+  // Upload schedule JSON to Canvas course files (3-step process)
+  async uploadSchedule(baseUrl, token, courseId, data) {
+    const jsonStr = JSON.stringify(data);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+
+    // Step 1: Request upload URL
+    const step1 = await canvasFetch(baseUrl, token, `/courses/${courseId}/files`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: SCHEDULE_FILENAME,
+        content_type: 'application/json',
+        size: blob.size,
+        on_duplicate: 'overwrite',
+        parent_folder_path: '/',
+      }),
+    });
+
+    // Step 2: Upload file to the provided URL
+    const form = new FormData();
+    Object.entries(step1.upload_params).forEach(([k, v]) => form.append(k, v));
+    form.append('file', blob, SCHEDULE_FILENAME);
+    const step2 = await fetch(step1.upload_url, { method: 'POST', body: form });
+    if (!step2.ok && step2.status !== 301 && step2.status !== 303) {
+      throw new Error(`File upload failed: ${step2.status}`);
+    }
+    // Step 2 may redirect — follow the Location header or use the response
+    const confirmUrl = step2.status >= 300 ? step2.headers.get('Location') : null;
+    if (confirmUrl) {
+      await fetch(confirmUrl, { headers: { Authorization: `Bearer ${token}` } });
+    }
+    return true;
+  },
+
+  // Download schedule JSON from Canvas course files
+  async downloadSchedule(baseUrl, token, courseId) {
+    // Search for the file by name in the course root folder
+    const files = await canvasFetch(baseUrl, token,
+      `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
+    const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
+    if (!file) return null;
+    // Fetch the file contents via its URL
+    const res = await fetch(file.url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+    return res.json();
+  },
+
+  // Get public URL for a course file (for student access)
+  async getPublicUrl(baseUrl, token, courseId) {
+    const files = await canvasFetch(baseUrl, token,
+      `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
+    const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
+    if (!file) return null;
+    // Get a public download URL
+    const meta = await canvasFetch(baseUrl, token, `/files/${file.id}/public_url`);
+    return meta.public_url;
+  },
 };
 
 // ============================================================
@@ -230,7 +289,25 @@ export default function ClassPlannerApp() {
       const init = saved || freshDemoState();
       // back-compat for older saves
       if (!init.pendingCreations) init.pendingCreations = [];
-      if (hashStudent) init.studentView = true;
+      if (hashStudent) {
+        init.studentView = true;
+        // Load published schedule from ?src= param (URL to JSON file)
+        const params = new URLSearchParams(window.location.search);
+        const src = params.get('src');
+        if (src) {
+          try {
+            const res = await fetch(src);
+            if (res.ok) {
+              const data = await res.json();
+              init.setup = data.setup;
+              init.items = data.items;
+              init.schedule = data.schedule;
+              init.extraDays = data.extraDays;
+              init.unscheduled = data.unscheduled || [];
+            }
+          } catch { /* fall back to local data */ }
+        }
+      }
       setState(init);
       setLoaded(true);
     })();
@@ -239,6 +316,7 @@ export default function ClassPlannerApp() {
   useEffect(() => {
     stateRef.current = state;
     if (!loaded || !state) return;
+    state.lastSaved = new Date().toISOString();
     Store.save(state);
   }, [state, loaded]);
 
@@ -402,6 +480,61 @@ export default function ClassPlannerApp() {
     }
     if (didCanvasSync) showToast('Synced to Canvas ✓');
     else if (canvasError) showToast(`Canvas sync failed: ${canvasError}`, 'err');
+  };
+
+  // ------ Publish / load schedule to Canvas course files ------
+  const [studentEmbed, setStudentEmbed] = useState(null);
+
+  const publishToCanvas = async () => {
+    const s = stateRef.current;
+    if (!s?.canvas?.connected || !s.canvas.courseId) {
+      showToast('Connect to Canvas and pick a course first', 'err');
+      return;
+    }
+    try {
+      const publishData = {
+        setup: s.setup,
+        items: s.items,
+        schedule: s.schedule,
+        extraDays: s.extraDays,
+        unscheduled: s.unscheduled,
+        publishedAt: new Date().toISOString(),
+      };
+      await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
+      // Get the public URL for student access
+      const publicUrl = await CanvasAPI.getPublicUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+      if (publicUrl) {
+        const base = window.location.origin + window.location.pathname;
+        const embedUrl = `${base}?src=${encodeURIComponent(publicUrl)}#student`;
+        setStudentEmbed(embedUrl);
+      }
+      showToast('Published schedule to Canvas');
+    } catch (e) {
+      showToast(`Publish failed: ${e.message}`, 'err');
+    }
+  };
+
+  const loadFromCanvas = async () => {
+    const s = stateRef.current;
+    if (!s?.canvas?.connected || !s.canvas.courseId) {
+      showToast('Connect to Canvas and pick a course first', 'err');
+      return;
+    }
+    try {
+      const data = await CanvasAPI.downloadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+      if (!data) { showToast('No published schedule found', 'err'); return; }
+      updateState((s) => {
+        s.setup = data.setup;
+        s.items = data.items;
+        s.schedule = data.schedule;
+        s.extraDays = data.extraDays;
+        s.unscheduled = data.unscheduled || [];
+        return s;
+      });
+      showToast('Loaded schedule from Canvas');
+    } catch (e) {
+      showToast(`Load failed: ${e.message}`, 'err');
+    }
   };
 
   // ------ Canvas connect / import / refresh ------
@@ -580,14 +713,14 @@ export default function ClassPlannerApp() {
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.18em', color: T.muted, textTransform: 'uppercase' }}>
                 Course schedule · {allDays.length} meetings
+                {state.setup.startDate && state.setup.endDate && (
+                  <> · {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)} · {state.setup.classDays.map((c) => DAY_SHORT[c]).join(' · ')}</>
+                )}
               </div>
-              <h1 className="planner-title" style={{ marginTop: 4 }}>
-                {state.setup.courseTitle || 'Untitled Course'}
-              </h1>
-              {state.setup.startDate && state.setup.endDate && (
-                <div style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginTop: 6 }}>
-                  {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)} ·{' '}
-                  {state.setup.classDays.map((c) => DAY_SHORT[c]).join(' · ')}
+              {!isStudent && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 2 }}>
+                  Build {new Date(__BUILD_TIME__).toLocaleString()}
+                  {state.lastSaved && <> · Saved {new Date(state.lastSaved).toLocaleString()}</>}
                 </div>
               )}
             </div>
@@ -600,6 +733,16 @@ export default function ClassPlannerApp() {
               )}
               {!isStudent && (
                 <>
+                  {state.canvas.connected && state.canvas.courseId && (
+                    <>
+                      <IconButton onClick={publishToCanvas} title="Publish schedule to Canvas course files">
+                        <Upload size={16} />
+                      </IconButton>
+                      <IconButton onClick={loadFromCanvas} title="Load schedule from Canvas course files">
+                        <Download size={16} />
+                      </IconButton>
+                    </>
+                  )}
                   <IconButton onClick={() => setShowCanvas((v) => !v)} title="Canvas connection">
                     {state.canvas.connected ? <Cloud size={16} color={T.forest} /> : <CloudOff size={16} color={T.muted} />}
                   </IconButton>
@@ -613,6 +756,28 @@ export default function ClassPlannerApp() {
         </div>
       </header>
 
+      {studentEmbed && !isStudent && (
+        <div style={{ background: T.subtle, borderBottom: `1px solid ${T.border}`, padding: '12px 24px' }}>
+          <div style={{ maxWidth: 1152, margin: '0 auto' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 600, color: T.ink }}>
+                Student embed code
+              </span>
+              <IconButton onClick={() => setStudentEmbed(null)}><X size={14} /></IconButton>
+            </div>
+            <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 8 }}>
+              Paste this into a Canvas Page (HTML editor) for students. The public URL expires — re-publish to get a fresh one.
+            </p>
+            <div style={{ position: 'relative' }}>
+              <textarea readOnly value={`<iframe src="${studentEmbed}" width="100%" height="800" style="border:none;"></iframe>`}
+                style={{ width: '100%', fontFamily: FONT_MONO, fontSize: '11px', padding: 8, border: `1px solid ${T.border}`,
+                  borderRadius: 3, background: T.paper, color: T.ink, resize: 'vertical', minHeight: 60 }}
+                onClick={(e) => { e.target.select(); navigator.clipboard?.writeText(e.target.value); showToast('Copied to clipboard'); }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       {!isStudent && showSetup && (
         <SetupPanel state={state} updateState={updateState} onClose={() => setShowSetup(false)} />
       )}
