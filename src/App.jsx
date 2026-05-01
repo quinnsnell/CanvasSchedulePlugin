@@ -131,14 +131,13 @@ const Store = {
 // ============================================================
 async function canvasFetch(baseUrl, token, path, opts = {}) {
   const url = `${baseUrl.replace(/\/+$/, '')}/api/v1${path}`;
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      ...(opts.headers || {}),
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
+  const headers = {
+    ...(opts.headers || {}),
+    Authorization: `Bearer ${token}`,
+  };
+  // Only set Content-Type on requests with a body (avoids unnecessary CORS preflight on GETs)
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(url, { ...opts, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Canvas ${res.status}: ${text.slice(0, 180) || res.statusText}`);
