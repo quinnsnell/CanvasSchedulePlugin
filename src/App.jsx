@@ -548,8 +548,10 @@ export default function ClassPlannerApp() {
         return s;
       });
       showToast(`Connected — ${courses.length} courses found`);
+      return { ok: true, count: courses.length };
     } catch (e) {
       showToast(`Could not connect: ${e.message}`, 'err');
+      return { ok: false, error: e.message };
     }
   };
 
@@ -1391,9 +1393,16 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onClose }) {
   const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
   const [token, setToken] = useState(state.canvas.token || '');
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState(null);
   const doConnect = async () => {
     setBusy(true);
-    await onConnect(baseUrl.trim(), token.trim());
+    setStatus(null);
+    const result = await onConnect(baseUrl.trim(), token.trim());
+    if (result.ok) {
+      setStatus({ msg: `Connected — ${result.count} courses found`, kind: 'ok' });
+    } else {
+      setStatus({ msg: result.error, kind: 'err' });
+    }
     setBusy(false);
   };
   return (
@@ -1444,7 +1453,18 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onClose }) {
             </>
           )}
         </div>
-        {!state.canvas.connected && (
+        {status && (
+          <div style={{
+            marginTop: 14, padding: 10, borderRadius: 3, fontSize: '12px', display: 'flex', gap: 8,
+            background: status.kind === 'ok' ? '#e8f5e9' : '#fbe9e7',
+            border: `1px solid ${status.kind === 'ok' ? '#a5d6a7' : '#ef9a9a'}`,
+            color: status.kind === 'ok' ? T.forest : T.ox,
+          }}>
+            {status.kind === 'ok' ? <Check size={14} style={{ flexShrink: 0, marginTop: 2 }} /> : <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />}
+            <span>{status.msg}</span>
+          </div>
+        )}
+        {!state.canvas.connected && !status && (
           <div style={{ marginTop: 14, padding: 10, background: T.subtle, border: `1px solid ${T.border}`, borderRadius: 3, fontSize: '12px', color: T.muted, display: 'flex', gap: 8 }}>
             <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
             <span>
