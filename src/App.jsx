@@ -798,8 +798,8 @@ export default function ClassPlannerApp() {
     }
   };
 
-  // ------ Move item between days ------
-  const moveItem = async (id, toDate) => {
+  // ------ Move item between days (position = index to insert at, or -1/undefined for append) ------
+  const moveItem = async (id, toDate, position) => {
     let canvasError = null;
     let didCanvasSync = false;
     const willAutoAddDay = toDate && !allDaysSet.has(toDate);
@@ -815,7 +815,11 @@ export default function ClassPlannerApp() {
       } else {
         if (willAutoAddDay && !s.extraDays.includes(toDate)) s.extraDays.push(toDate);
         s.schedule[toDate] = s.schedule[toDate] || [];
-        s.schedule[toDate].push(id);
+        if (position != null && position >= 0) {
+          s.schedule[toDate].splice(position, 0, id);
+        } else {
+          s.schedule[toDate].push(id);
+        }
         if (s.items[id]?.type === 'assign') s.items[id].dueDate = toDate;
       }
       return s;
@@ -1427,6 +1431,7 @@ function ClassDayRow({
 }) {
   const [hovering, setHovering] = useState(false);
   const [showAddDay, setShowAddDay] = useState(false);
+  const [dropIdx, setDropIdx] = useState(null);
   const d = new Date(date + 'T00:00:00');
   // alternate background by *week* (not row) so a whole week reads as one band
   const weekShade = (weekIdx ?? 0) % 2 === 1;
@@ -1515,15 +1520,16 @@ function ClassDayRow({
 
       {/* CONTENT COLUMN */}
       <div
-        onDragOver={(e) => { if (!isStudent) { e.preventDefault(); setHovering(true); } }}
-        onDragLeave={() => setHovering(false)}
+        onDragOver={(e) => { if (!isStudent) e.preventDefault(); }}
+        onDragLeave={() => { setHovering(false); setDropIdx(null); }}
         onDrop={(e) => {
           if (isStudent) return;
           e.preventDefault();
           setHovering(false);
           setDraggingId(null);
           const id = e.dataTransfer.getData('text/plain');
-          if (id) onMoveItem(id, date);
+          if (id) onMoveItem(id, date, dropIdx != null ? dropIdx : undefined);
+          setDropIdx(null);
         }}
         className={hovering ? 'drop-target-active' : ''}
         style={{
@@ -1531,7 +1537,7 @@ function ClassDayRow({
           minHeight: 60,
           display: 'flex',
           flexDirection: 'column',
-          gap: 8,
+          gap: 0,
           transition: 'background 120ms',
           minWidth: 0,
         }}
@@ -1541,16 +1547,48 @@ function ClassDayRow({
             Drop items here, or use the buttons below.
           </div>
         )}
-        {items.map((item) => (
-          <ItemCard
-            key={item.id} item={item} isStudent={isStudent} canvas={canvas}
-            onUpdate={onUpdateItem} onDelete={onDeleteItem}
-            onDuplicate={() => onDuplicate(item.id)}
-            draggingId={draggingId} setDraggingId={setDraggingId}
-            autoEdit={autoEditId === item.id}
-            onAutoEditConsumed={clearAutoEdit}
-          />
+        {items.map((item, idx) => (
+          <React.Fragment key={item.id}>
+            {/* Drop zone before each item */}
+            {!isStudent && draggingId && draggingId !== item.id && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropIdx(idx); setHovering(true); }}
+                onDragLeave={(e) => { e.stopPropagation(); if (dropIdx === idx) setDropIdx(null); }}
+                style={{
+                  height: dropIdx === idx ? 6 : 4,
+                  margin: '0 0',
+                  borderRadius: 2,
+                  background: dropIdx === idx ? T.inkBlue : 'transparent',
+                  transition: 'all 120ms',
+                }}
+              />
+            )}
+            <div style={{ marginBottom: 8 }}>
+              <ItemCard
+                item={item} isStudent={isStudent} canvas={canvas}
+                onUpdate={onUpdateItem} onDelete={onDeleteItem}
+                onDuplicate={() => onDuplicate(item.id)}
+                draggingId={draggingId} setDraggingId={setDraggingId}
+                autoEdit={autoEditId === item.id}
+                onAutoEditConsumed={clearAutoEdit}
+              />
+            </div>
+          </React.Fragment>
         ))}
+        {/* Drop zone after last item */}
+        {!isStudent && draggingId && items.length > 0 && (
+          <div
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropIdx(items.length); setHovering(true); }}
+            onDragLeave={(e) => { e.stopPropagation(); if (dropIdx === items.length) setDropIdx(null); }}
+            style={{
+              height: dropIdx === items.length ? 6 : 4,
+              margin: '0 0',
+              borderRadius: 2,
+              background: dropIdx === items.length ? T.inkBlue : 'transparent',
+              transition: 'all 120ms',
+            }}
+          />
+        )}
 
         {!isStudent && !holidayLabel && (
           <div className="day-tools" style={{ marginTop: 'auto', paddingTop: 6 }}>
