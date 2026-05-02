@@ -80,6 +80,20 @@ function weekKey(iso) {
   return d.toISOString().slice(0, 10);
 }
 
+// ISO week number — gives a stable even/odd for shading regardless of gaps
+function weekNumber(iso) {
+  const d = new Date(iso + 'T00:00:00');
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const days = Math.floor((d - jan1) / 86400000);
+  return Math.floor((days + jan1.getDay()) / 7);
+}
+
+// Convert a UTC ISO timestamp to a local YYYY-MM-DD string
+function localDateStr(isoUtc) {
+  const d = new Date(isoUtc);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const fmtMonthDay = (iso) => {
   if (!iso) return '';
   const d = new Date(iso + 'T00:00:00');
@@ -94,31 +108,42 @@ const fmtFull = (iso) => {
 // ============================================================
 // STORAGE
 // ============================================================
-const KEY = 'class-planner-v3';
+const KEY_PREFIX = 'class-planner-v3';
+const KEY_META = 'class-planner-meta'; // stores canvas connection + last courseId
 const Store = {
-  async load() {
+  _key(courseId) { return courseId ? `${KEY_PREFIX}-${courseId}` : KEY_PREFIX; },
+  async loadMeta() {
+    try {
+      const v = localStorage.getItem(KEY_META);
+      return v ? JSON.parse(v) : null;
+    } catch { return null; }
+  },
+  saveMeta(meta) {
+    try { localStorage.setItem(KEY_META, JSON.stringify(meta)); } catch {}
+  },
+  async load(courseId) {
     try {
       // claude.ai artifact context
       if (typeof window !== 'undefined' && window.storage) {
-        const r = await window.storage.get(KEY);
+        const r = await window.storage.get(this._key(courseId));
         return r?.value ? JSON.parse(r.value) : null;
       }
-      // hosted: localStorage
       if (typeof localStorage !== 'undefined') {
-        const v = localStorage.getItem(KEY);
+        const v = localStorage.getItem(this._key(courseId));
         return v ? JSON.parse(v) : null;
       }
       return null;
     } catch { return null; }
   },
   async save(data) {
+    const courseId = data?.canvas?.courseId;
     try {
       if (typeof window !== 'undefined' && window.storage) {
-        await window.storage.set(KEY, JSON.stringify(data));
+        await window.storage.set(this._key(courseId), JSON.stringify(data));
         return true;
       }
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(KEY, JSON.stringify(data));
+        localStorage.setItem(this._key(courseId), JSON.stringify(data));
         return true;
       }
       return false;
@@ -129,28 +154,47 @@ const Store = {
 // ============================================================
 // CANVAS API
 // ============================================================
+const IS_DEV = import.meta.env.DEV;
+
+// In dev mode, rewrite absolute Canvas URLs to go through the Vite proxy
+function proxyUrl(absoluteUrl, baseUrl) {
+  if (!IS_DEV || !absoluteUrl || !baseUrl) return absoluteUrl;
+  const base = baseUrl.replace(/\/+$/, '');
+  if (absoluteUrl.startsWith(base)) {
+    return absoluteUrl.slice(base.length); // turn into relative path
+  }
+  return absoluteUrl;
+}
+
 async function canvasFetch(baseUrl, token, path, opts = {}) {
-  const url = `${baseUrl.replace(/\/+$/, '')}/api/v1${path}`;
+  const url = IS_DEV
+    ? `/api/v1${path}`
+    : `${baseUrl.replace(/\/+$/, '')}/api/v1${path}`;
   const headers = {
     ...(opts.headers || {}),
     Authorization: `Bearer ${token}`,
   };
-  // Only set Content-Type on requests with a body (avoids unnecessary CORS preflight on GETs)
   if (opts.body) headers['Content-Type'] = 'application/json';
   const res = await fetch(url, { ...opts, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Canvas ${res.status}: ${text.slice(0, 180) || res.statusText}`);
   }
-  return res.json();
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
 }
 const SCHEDULE_FILENAME = 'schedule-planner.json';
+const SCHEDULE_HTML_FILENAME = 'schedule.html';
 
 const CanvasAPI = {
   listCourses: (b, t) =>
-    canvasFetch(b, t, '/courses?enrollment_type=teacher&state[]=available&per_page=100'),
+    canvasFetch(b, t, '/courses?enrollment_type=teacher&state[]=available&state[]=unpublished&state[]=created&include[]=term&per_page=100'),
   listAssignments: (b, t, c) =>
     canvasFetch(b, t, `/courses/${c}/assignments?per_page=100`),
+  listFiles: (b, t, c) =>
+    canvasFetch(b, t, `/courses/${c}/files?per_page=100&sort=name`),
+  listPages: (b, t, c) =>
+    canvasFetch(b, t, `/courses/${c}/pages?per_page=100&sort=title&published=true`),
   setDueDate: (b, t, c, a, dueAtISO) =>
     canvasFetch(b, t, `/courses/${c}/assignments/${a}`, {
       method: 'PUT',
@@ -161,6 +205,16 @@ const CanvasAPI = {
   async uploadSchedule(baseUrl, token, courseId, data) {
     const jsonStr = JSON.stringify(data);
     const blob = new Blob([jsonStr], { type: 'application/json' });
+
+    // Delete existing file first to avoid versioning
+    try {
+      const files = await canvasFetch(baseUrl, token,
+        `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
+      const existing = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
+      if (existing) {
+        await canvasFetch(baseUrl, token, `/files/${existing.id}`, { method: 'DELETE' });
+      }
+    } catch { /* ok if delete fails */ }
 
     // Step 1: Request upload URL
     const step1 = await canvasFetch(baseUrl, token, `/courses/${courseId}/files`, {
@@ -175,32 +229,55 @@ const CanvasAPI = {
     });
 
     // Step 2: Upload file to the provided URL
+    // Canvas may return a same-domain URL or an S3 URL
     const form = new FormData();
     Object.entries(step1.upload_params).forEach(([k, v]) => form.append(k, v));
     form.append('file', blob, SCHEDULE_FILENAME);
-    const step2 = await fetch(step1.upload_url, { method: 'POST', body: form });
-    if (!step2.ok && step2.status !== 301 && step2.status !== 303) {
+    const uploadUrl = proxyUrl(step1.upload_url, baseUrl);
+    const step2 = await fetch(uploadUrl, { method: 'POST', body: form, redirect: 'follow' });
+    // Step 2 may return 2xx (success) or 3xx (needs confirmation)
+    if (step2.status >= 400) {
       throw new Error(`File upload failed: ${step2.status}`);
     }
-    // Step 2 may redirect — follow the Location header or use the response
-    const confirmUrl = step2.status >= 300 ? step2.headers.get('Location') : null;
-    if (confirmUrl) {
-      await fetch(confirmUrl, { headers: { Authorization: `Bearer ${token}` } });
+    // If we got a 3xx, follow the Location header to confirm
+    if (step2.status >= 300) {
+      const confirmUrl = step2.headers.get('Location');
+      if (confirmUrl) {
+        await fetch(proxyUrl(confirmUrl, baseUrl), { headers: { Authorization: `Bearer ${token}` } });
+      }
     }
     return true;
   },
 
   // Download schedule JSON from Canvas course files
   async downloadSchedule(baseUrl, token, courseId) {
-    // Search for the file by name in the course root folder
     const files = await canvasFetch(baseUrl, token,
       `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
     const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
     if (!file) return null;
-    // Fetch the file contents via its URL
-    const res = await fetch(file.url, { headers: { Authorization: `Bearer ${token}` } });
+    // GET /files/:id with Authorization redirects to the file content
+    const url = IS_DEV
+      ? `/api/v1/files/${file.id}`
+      : `${baseUrl.replace(/\/+$/, '')}/api/v1/files/${file.id}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: 'follow',
+    });
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-    return res.json();
+    // Response may be the file metadata (JSON with url field) or the file content
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      // If we got metadata instead of file content, fetch the actual file
+      if (json.url && json.id && !json.items) {
+        const contentRes = await fetch(json.url);
+        if (!contentRes.ok) throw new Error(`Download failed: ${contentRes.status}`);
+        return contentRes.json();
+      }
+      return json;
+    } catch {
+      throw new Error('Failed to parse schedule file');
+    }
   },
 
   // Get public URL for a course file (for student access)
@@ -209,9 +286,32 @@ const CanvasAPI = {
       `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
     const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
     if (!file) return null;
-    // Get a public download URL
     const meta = await canvasFetch(baseUrl, token, `/files/${file.id}/public_url`);
     return meta.public_url;
+  },
+
+  // Create or update a Canvas Page with schedule HTML
+  async publishPage(baseUrl, token, courseId, title, html) {
+    // Search for existing page by title
+    try {
+      const pages = await canvasFetch(baseUrl, token,
+        `/courses/${courseId}/pages?search_term=${encodeURIComponent(title)}&per_page=10`);
+      const existing = pages.find((p) => p.title === title);
+      if (existing) {
+        // Update existing page in place
+        await canvasFetch(baseUrl, token, `/courses/${courseId}/pages/${existing.url}`, {
+          method: 'PUT',
+          body: JSON.stringify({ wiki_page: { body: html, published: true } }),
+        });
+        return existing.url;
+      }
+    } catch { /* page not found, create below */ }
+    // Create new page
+    const result = await canvasFetch(baseUrl, token, `/courses/${courseId}/pages`, {
+      method: 'POST',
+      body: JSON.stringify({ wiki_page: { title, body: html, published: true } }),
+    });
+    return result.url;
   },
 };
 
@@ -285,13 +385,22 @@ export default function ClassPlannerApp() {
 
   useEffect(() => {
     (async () => {
-      const saved = await Store.load();
+      // Load meta (canvas connection info + last courseId)
+      const meta = await Store.loadMeta();
+      const courseId = meta?.courseId || '';
+      const saved = await Store.load(courseId);
       const init = saved || freshDemoState();
-      // back-compat for older saves
       if (!init.pendingCreations) init.pendingCreations = [];
+      // Restore canvas connection from meta
+      if (meta && !init.canvas.connected && meta.baseUrl && meta.token) {
+        init.canvas.baseUrl = meta.baseUrl;
+        init.canvas.token = meta.token;
+        init.canvas.courseId = meta.courseId || '';
+        init.canvas.courses = meta.courses || [];
+        init.canvas.connected = meta.connected || false;
+      }
       if (hashStudent) {
         init.studentView = true;
-        // Load published schedule from ?src= param (URL to JSON file)
         const params = new URLSearchParams(window.location.search);
         const src = params.get('src');
         if (src) {
@@ -318,6 +427,14 @@ export default function ClassPlannerApp() {
     if (!loaded || !state) return;
     state.lastSaved = new Date().toISOString();
     Store.save(state);
+    // Save canvas connection info to meta (shared across courses)
+    Store.saveMeta({
+      baseUrl: state.canvas.baseUrl,
+      token: state.canvas.token,
+      courseId: state.canvas.courseId,
+      courses: state.canvas.courses,
+      connected: state.canvas.connected,
+    });
   }, [state, loaded]);
 
   const showToast = (msg, kind = 'ok') => {
@@ -337,19 +454,19 @@ export default function ClassPlannerApp() {
     return m;
   }, [state]);
 
-  // Window focus → if pending creations exist & connected, refresh from Canvas
+  // Window focus → if pending creations exist & connected, sync from Canvas
+  const syncRef = useRef(null);
   useEffect(() => {
     const onFocus = () => {
       const s = stateRef.current;
       if (!s) return;
-      // prune expired pending
       const now = Date.now();
       const fresh = (s.pendingCreations || []).filter((p) => now - p.time < PENDING_TTL_MS);
       if (fresh.length !== (s.pendingCreations || []).length) {
         setState((prev) => ({ ...prev, pendingCreations: fresh }));
       }
       if (fresh.length > 0 && s.canvas.connected && s.canvas.courseId) {
-        refreshFromCanvas();
+        syncRef.current();
       }
     };
     window.addEventListener('focus', onFocus);
@@ -387,7 +504,8 @@ export default function ClassPlannerApp() {
       setShowCanvas(true);
       return;
     }
-    const url = `${baseUrl.replace(/\/+$/, '')}/courses/${courseId}/assignments/new`;
+    const dueAt = encodeURIComponent(`${date}T23:59:00`);
+    const url = `${baseUrl.replace(/\/+$/, '')}/courses/${courseId}/assignments/new?due_at=${dueAt}`;
     const win = window.open(url, '_blank', 'noopener');
     updateState((s) => {
       s.pendingCreations = s.pendingCreations || [];
@@ -422,6 +540,32 @@ export default function ClassPlannerApp() {
     });
   };
 
+  // ------ Course switching ------
+  const switchCourse = async (newCourseId) => {
+    // Save current state first
+    if (state) Store.save(state);
+    // Load saved state for the new course, or start fresh
+    const saved = await Store.load(newCourseId);
+    const canvas = { ...state.canvas, courseId: newCourseId };
+    if (saved) {
+      saved.canvas = canvas;
+      setState(saved);
+    } else {
+      const fresh = {
+        setup: { courseTitle: '', startDate: '', endDate: '', classDays: ['MO', 'WE', 'FR'] },
+        canvas,
+        items: {}, schedule: {}, extraDays: [], unscheduled: [],
+        pendingCreations: [], studentView: false,
+      };
+      // Set dates from course info
+      const course = canvas.courses.find((c) => String(c.id) === String(newCourseId));
+      if (course?.startAt) fresh.setup.startDate = course.startAt.slice(0, 10);
+      if (course?.endAt) fresh.setup.endDate = course.endAt.slice(0, 10);
+      if (course?.name) fresh.setup.courseTitle = course.name;
+      setState(fresh);
+    }
+  };
+
   // ------ Item edits ------
   const deleteItem = (id) => {
     updateState((s) => {
@@ -440,6 +584,15 @@ export default function ClassPlannerApp() {
       s.items[id] = { ...s.items[id], ...patch };
       return s;
     });
+    // Sync title changes to Canvas
+    const item = state.items[id];
+    if (patch.title && item?.canvasId && state.canvas.connected && state.canvas.courseId) {
+      canvasFetch(state.canvas.baseUrl, state.canvas.token,
+        `/courses/${state.canvas.courseId}/assignments/${item.canvasId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignment: { name: patch.title } }),
+        }).catch(() => {});
+    }
   };
 
   // ------ Move item between days ------
@@ -482,7 +635,76 @@ export default function ClassPlannerApp() {
     else if (canvasError) showToast(`Canvas sync failed: ${canvasError}`, 'err');
   };
 
-  // ------ Publish / load schedule to Canvas course files ------
+  // ------ Publish schedule to Canvas ------
+  const renderScheduleHtml = (s) => {
+    const days = computeAllDays(s.setup, s.extraDays);
+    const teaching = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
+    let prevWk = null;
+    let rows = '';
+    days.forEach((d) => {
+      const dt = new Date(d + 'T00:00:00');
+      const dayName = dt.toLocaleDateString('en-US', { weekday: 'long' });
+      const dateNum = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const wk = weekKey(d);
+      const isNewWeek = wk !== prevWk;
+      prevWk = wk;
+      const isExtra = !teaching.has(d);
+      const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
+      const bgColor = isExtra ? T.amberSoft : (weekNumber(d) % 2 === 1 ? '#F2EBDA' : T.paper);
+
+      // Week label row
+      if (isNewWeek) {
+        const weekStart = new Date(wk + 'T00:00:00');
+        const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+        const weekLabel = `Week of ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${T.borderStrong};"></div></td></tr>`;
+        // The week label is shown inside the date cell of the first row
+      }
+
+      let content = '';
+      items.forEach((item) => {
+        if (item.type === 'assign') {
+          const titleHtml = item.htmlUrl
+            ? `<a href="${item.htmlUrl}" style="color: ${T.inkBlue}; text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
+            : (item.title || 'Untitled');
+          content += `<div style="margin: 0 0 8px 0; background: ${T.paper}; border: 1px solid ${T.border}; border-left: 3px solid ${T.inkBlue}; border-radius: 3px; padding: 10px 12px;">
+            <div style="margin-bottom: 4px;">
+              <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${T.inkBlue}; background: ${T.inkBlueSoft}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
+              ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: ${T.muted}; margin-left: 6px;">${item.points} pts</span>` : ''}
+            </div>
+            <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${T.ink}; line-height: 1.3;">${titleHtml}</div>
+          </div>`;
+        } else if (item.type === 'rich') {
+          content += `<div style="margin: 0 0 8px 0; background: ${T.paper}; border: 1px solid ${T.border}; border-left: 3px solid ${T.sienna}; border-radius: 3px; padding: 10px 12px;">
+            <div style="margin-bottom: 4px;">
+              <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${T.sienna}; background: ${T.siennaSoft}; padding: 2px 6px; border-radius: 2px;">Note</span>
+            </div>
+            <div style="font-size: 13px; color: ${T.ink}; line-height: 1.5;">${item.html || ''}</div>
+          </div>`;
+        }
+      });
+      if (!content) content = `<div style="padding: 4px 0;">&nbsp;</div>`;
+
+      rows += `<tr style="background: ${bgColor};">
+        <td style="padding: 14px 16px; border-right: 1px solid ${T.border}; vertical-align: top; width: 170px;">
+          <div style="font-family: Georgia, serif; font-weight: 500; color: ${T.ink}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
+          <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px;">${dayName}</div>
+        </td>
+        <td style="padding: 14px 16px; vertical-align: top;">${content}</td>
+      </tr>`;
+    });
+
+    return `<div style="max-width: 1152px; margin: 0 auto;">
+      <table style="width: 100%; border-collapse: collapse; border: 1px solid ${T.border}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif;">
+        <thead><tr style="background: ${T.subtle}; border-bottom: 1px solid ${T.border};">
+          <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${T.muted}; border-right: 1px solid ${T.border};">Class meeting</th>
+          <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${T.muted};">Readings · Assignments · Materials</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  };
+
   const publishToCanvas = async () => {
     const s = stateRef.current;
     if (!s?.canvas?.connected || !s.canvas.courseId) {
@@ -490,6 +712,7 @@ export default function ClassPlannerApp() {
       return;
     }
     try {
+      // Save JSON to course files
       const publishData = {
         setup: s.setup,
         items: s.items,
@@ -499,13 +722,14 @@ export default function ClassPlannerApp() {
         publishedAt: new Date().toISOString(),
       };
       await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
-      // Get the public URL for student access
-      const publicUrl = await CanvasAPI.getPublicUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
-      if (publicUrl) {
-        const base = window.location.origin + window.location.pathname;
-        const embedUrl = `${base}?src=${encodeURIComponent(publicUrl)}#student`;
-        setStudentEmbed(embedUrl);
-      }
+
+      // Publish schedule as a Canvas Page (updates existing page if found)
+      const html = renderScheduleHtml(s);
+      const slug = await CanvasAPI.publishPage(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, 'Schedule', html);
+      const pageUrl = `${s.canvas.baseUrl.replace(/\/+$/, '')}/courses/${s.canvas.courseId}/pages/${slug}`;
+      setStudentEmbed(pageUrl);
+      setTimeout(() => setStudentEmbed(null), 8000);
+
       showToast('Published schedule to Canvas');
     } catch (e) {
       showToast(`Publish failed: ${e.message}`, 'err');
@@ -543,7 +767,18 @@ export default function ClassPlannerApp() {
         s.canvas.baseUrl = baseUrl;
         s.canvas.token = token;
         s.canvas.connected = true;
-        s.canvas.courses = courses.map((c) => ({ id: c.id, name: c.name }));
+        s.canvas.courses = courses.map((c) => ({
+          id: c.id, name: c.name,
+          startAt: c.start_at || c.term?.start_at || null,
+          endAt: c.end_at || c.term?.end_at || null,
+        }));
+        // If a course is already selected, update dates from the fresh data
+        if (s.canvas.courseId) {
+          const course = s.canvas.courses.find((c) => String(c.id) === String(s.canvas.courseId));
+          if (course?.startAt) s.setup.startDate = course.startAt.slice(0, 10);
+          if (course?.endAt) s.setup.endDate = course.endAt.slice(0, 10);
+          if (course?.name) s.setup.courseTitle = course.name;
+        }
         return s;
       });
       showToast(`Connected — ${courses.length} courses found`);
@@ -554,90 +789,53 @@ export default function ClassPlannerApp() {
     }
   };
 
-  // Import + reconcile pending creations.
-  const refreshFromCanvas = async () => {
+  // Light sync: merge new/updated Canvas assignments into existing state (used by focus handler)
+  const syncFromCanvas = async () => {
     const s0 = stateRef.current;
-    if (!s0?.canvas?.connected || !s0.canvas.courseId) {
-      showToast('Pick a course first', 'err');
-      return;
-    }
+    if (!s0?.canvas?.connected || !s0.canvas.courseId) return;
     let list;
     try {
       list = await CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
-    } catch (e) {
-      showToast(`Refresh failed: ${e.message}`, 'err');
-      return;
-    }
+    } catch { return; }
 
-    // Sort pending by time so we resolve oldest first
     const pending = [...(s0.pendingCreations || [])].sort((a, b) => a.time - b.time);
     const claimedPending = new Set();
     const patchPromises = [];
 
     updateState((s) => {
-      let added = 0, updated = 0, autoAdded = 0;
+      let added = 0;
       const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
 
       list.forEach((a) => {
-        const existing = Object.values(s.items).find(
-          (it) => it.type === 'assign' && it.canvasId === a.id
-        );
+        const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
         if (existing) {
           existing.title = a.name;
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
-          updated++;
-          // if Canvas due date changed, relocate
-          const newDue = a.due_at ? a.due_at.slice(0, 10) : null;
-          if (newDue && newDue !== existing.dueDate) {
-            // remove from old date
-            if (existing.dueDate && s.schedule[existing.dueDate]) {
-              s.schedule[existing.dueDate] = s.schedule[existing.dueDate].filter((x) => x !== existing.id);
-              if (s.schedule[existing.dueDate].length === 0) delete s.schedule[existing.dueDate];
-            }
-            existing.dueDate = newDue;
-            if (!teachingNow.has(newDue) && !s.extraDays.includes(newDue)) {
-              s.extraDays.push(newDue);
-              autoAdded++;
-            }
-            s.schedule[newDue] = s.schedule[newDue] || [];
-            if (!s.schedule[newDue].includes(existing.id)) s.schedule[newDue].push(existing.id);
-          }
           return;
         }
 
         const id = uid();
-        let due = a.due_at ? a.due_at.slice(0, 10) : null;
-        let pendingMatch = null;
+        let due = a.due_at ? localDateStr(a.due_at) : null;
 
         if (!due) {
-          // try to claim a pending creation
-          pendingMatch = pending.find((p) => !claimedPending.has(p.id));
+          const pendingMatch = pending.find((p) => !claimedPending.has(p.id));
           if (pendingMatch) {
             claimedPending.add(pendingMatch.id);
             due = pendingMatch.date;
-            // PATCH Canvas with the intended due date
             const dueISO = new Date(due + 'T23:59:00').toISOString();
             patchPromises.push(
-              CanvasAPI.setDueDate(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, a.id, dueISO)
-                .catch(() => null)
+              CanvasAPI.setDueDate(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, a.id, dueISO).catch(() => null)
             );
           }
         } else {
-          // Canvas already has a date; claim a pending if dates match
           const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
           if (match) claimedPending.add(match.id);
         }
 
-        s.items[id] = {
-          id, type: 'assign', title: a.name, points: a.points_possible || 0,
-          canvasId: a.id, htmlUrl: a.html_url, dueDate: due,
-        };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due };
         if (due) {
-          if (!teachingNow.has(due) && !s.extraDays.includes(due)) {
-            s.extraDays.push(due);
-            autoAdded++;
-          }
+          if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
           s.schedule[due] = s.schedule[due] || [];
           s.schedule[due].push(id);
         } else {
@@ -646,18 +844,102 @@ export default function ClassPlannerApp() {
         added++;
       });
 
-      // remove resolved pending
       s.pendingCreations = (s.pendingCreations || []).filter((p) => !claimedPending.has(p.id));
-
-      if (added || updated) {
-        showToast(`Refreshed: ${added} new, ${updated} updated${autoAdded ? `, +${autoAdded} dates` : ''}`);
-      } else {
-        showToast('No changes from Canvas');
-      }
+      if (added) showToast(`Added ${added} new assignment${added > 1 ? 's' : ''}`);
       return s;
     });
 
     await Promise.all(patchPromises);
+  };
+  syncRef.current = syncFromCanvas;
+
+  // Full reload: try published schedule from course files, then import assignments from Canvas.
+  // Clears everything first.
+  const refreshFromCanvas = async () => {
+    const s0 = stateRef.current;
+    if (!s0?.canvas?.connected || !s0.canvas.courseId) {
+      showToast('Pick a course first', 'err');
+      return;
+    }
+
+    // Load published schedule from course files (includes notes)
+    let published = null;
+    try {
+      published = await CanvasAPI.downloadSchedule(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
+    } catch { /* no published schedule */ }
+
+    // Fetch current assignments from Canvas
+    let list = [];
+    try {
+      list = await CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
+    } catch (e) {
+      if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); return; }
+    }
+
+    updateState((s) => {
+      // Start from published schedule if available, otherwise blank
+      if (published) {
+        s.setup = published.setup || s.setup;
+        s.items = published.items || {};
+        s.schedule = published.schedule || {};
+        s.extraDays = published.extraDays || [];
+        s.unscheduled = published.unscheduled || [];
+      } else {
+        s.items = {};
+        s.schedule = {};
+        s.extraDays = [];
+        s.unscheduled = [];
+      }
+      s.pendingCreations = [];
+
+      const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
+      let added = 0, updated = 0, autoAdded = 0;
+
+      // Merge Canvas assignments on top
+      list.forEach((a) => {
+        const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
+        if (existing) {
+          existing.title = a.name;
+          existing.points = a.points_possible || 0;
+          existing.htmlUrl = a.html_url;
+          // Relocate if Canvas due date changed
+          const newDue = a.due_at ? localDateStr(a.due_at) : null;
+          if (newDue && newDue !== existing.dueDate) {
+            if (existing.dueDate && s.schedule[existing.dueDate]) {
+              s.schedule[existing.dueDate] = s.schedule[existing.dueDate].filter((x) => x !== existing.id);
+              if (s.schedule[existing.dueDate].length === 0) delete s.schedule[existing.dueDate];
+            }
+            existing.dueDate = newDue;
+            if (!teachingNow.has(newDue) && !s.extraDays.includes(newDue)) { s.extraDays.push(newDue); autoAdded++; }
+            s.schedule[newDue] = s.schedule[newDue] || [];
+            if (!s.schedule[newDue].includes(existing.id)) s.schedule[newDue].push(existing.id);
+          }
+          updated++;
+          return;
+        }
+
+        // New assignment from Canvas
+        const id = uid();
+        const due = a.due_at ? localDateStr(a.due_at) : null;
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due };
+        if (due) {
+          if (!teachingNow.has(due) && !s.extraDays.includes(due)) { s.extraDays.push(due); autoAdded++; }
+          s.schedule[due] = s.schedule[due] || [];
+          s.schedule[due].push(id);
+        } else {
+          s.unscheduled.push(id);
+        }
+        added++;
+      });
+
+      const parts = [];
+      if (published) parts.push('loaded schedule');
+      if (added) parts.push(`${added} new`);
+      if (updated) parts.push(`${updated} updated`);
+      if (autoAdded) parts.push(`+${autoAdded} dates`);
+      showToast(parts.length ? `Refreshed: ${parts.join(', ')}` : 'No changes');
+      return s;
+    });
   };
 
   const isStudent = state.studentView;
@@ -761,20 +1043,17 @@ export default function ClassPlannerApp() {
           <div style={{ maxWidth: 1152, margin: '0 auto' }}>
             <div className="flex items-center justify-between mb-2">
               <span style={{ fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 600, color: T.ink }}>
-                Student embed code
+                Published to Canvas
               </span>
               <IconButton onClick={() => setStudentEmbed(null)}><X size={14} /></IconButton>
             </div>
             <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 8 }}>
-              Paste this into a Canvas Page (HTML editor) for students. The public URL expires — re-publish to get a fresh one.
+              Schedule published as a Canvas Page. Students can view it directly. Re-publish after changes.
             </p>
-            <div style={{ position: 'relative' }}>
-              <textarea readOnly value={`<iframe src="${studentEmbed}" width="100%" height="800" style="border:none;"></iframe>`}
-                style={{ width: '100%', fontFamily: FONT_MONO, fontSize: '11px', padding: 8, border: `1px solid ${T.border}`,
-                  borderRadius: 3, background: T.paper, color: T.ink, resize: 'vertical', minHeight: 60 }}
-                onClick={(e) => { e.target.select(); navigator.clipboard?.writeText(e.target.value); showToast('Copied to clipboard'); }}
-              />
-            </div>
+            <a href={studentEmbed} target="_blank" rel="noopener noreferrer"
+              style={{ fontFamily: FONT_MONO, fontSize: '12px', color: T.inkBlue, wordBreak: 'break-all' }}>
+              {studentEmbed}
+            </a>
           </div>
         </div>
       )}
@@ -785,6 +1064,7 @@ export default function ClassPlannerApp() {
         <CanvasPanel
           state={state} updateState={updateState}
           onConnect={connectCanvas} onRefresh={refreshFromCanvas}
+          onSwitchCourse={switchCourse}
           onClose={() => setShowCanvas(false)}
         />
       )}
@@ -813,19 +1093,12 @@ export default function ClassPlannerApp() {
                 <div className="col-header">Readings · Assignments · Materials</div>
               </div>
               {(() => {
-                // assign a stable week index per Monday-week, in encounter order
-                const weekIndexByKey = {};
-                let nextWeekIdx = 0;
-                allDays.forEach((d) => {
-                  const k = weekKey(d);
-                  if (!(k in weekIndexByKey)) weekIndexByKey[k] = nextWeekIdx++;
-                });
                 let prevKey = null;
                 return allDays.map((d, idx) => {
                   const isExtra = !teachingSet.has(d);
                   const items = (state.schedule[d] || []).map((id) => state.items[id]).filter(Boolean);
                   const k = weekKey(d);
-                  const weekIdx = weekIndexByKey[k];
+                  const weekIdx = weekNumber(d);
                   const isWeekStart = idx > 0 && k !== prevKey;
                   prevKey = k;
                   return (
@@ -835,6 +1108,7 @@ export default function ClassPlannerApp() {
                     weekIdx={weekIdx} isWeekStart={isWeekStart}
                     items={items}
                     isStudent={isStudent}
+                    canvas={state.canvas}
                     canvasReady={state.canvas.connected && !!state.canvas.courseId}
                     pendingCount={pendingByDate[d] || 0}
                     onMoveItem={moveItem}
@@ -864,6 +1138,7 @@ export default function ClassPlannerApp() {
             </div>
             <UnscheduledZone
               items={state.unscheduled.map((id) => state.items[id]).filter(Boolean)}
+              canvas={state.canvas}
               onMoveItem={moveItem}
               onUpdateItem={updateItem}
               onDeleteItem={deleteItem}
@@ -900,7 +1175,7 @@ export default function ClassPlannerApp() {
 // CLASS DAY ROW
 // ============================================================
 function ClassDayRow({
-  date, index, isExtra, items, isStudent, canvasReady, pendingCount,
+  date, index, isExtra, items, isStudent, canvas, canvasReady, pendingCount,
   weekIdx, isWeekStart,
   onMoveItem, onUpdateItem, onDeleteItem,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
@@ -987,6 +1262,7 @@ function ClassDayRow({
           if (isStudent) return;
           e.preventDefault();
           setHovering(false);
+          setDraggingId(null);
           const id = e.dataTransfer.getData('text/plain');
           if (id) onMoveItem(id, date);
         }}
@@ -1008,7 +1284,7 @@ function ClassDayRow({
         )}
         {items.map((item) => (
           <ItemCard
-            key={item.id} item={item} isStudent={isStudent}
+            key={item.id} item={item} isStudent={isStudent} canvas={canvas}
             onUpdate={onUpdateItem} onDelete={onDeleteItem}
             draggingId={draggingId} setDraggingId={setDraggingId}
             autoEdit={autoEditId === item.id}
@@ -1087,7 +1363,7 @@ function AddDayPopover({ dates, onPick, onClose }) {
 // ============================================================
 // UNSCHEDULED ZONE
 // ============================================================
-function UnscheduledZone({ items, onMoveItem, onUpdateItem, onDeleteItem, draggingId, setDraggingId, autoEditId, clearAutoEdit }) {
+function UnscheduledZone({ items, canvas, onMoveItem, onUpdateItem, onDeleteItem, draggingId, setDraggingId, autoEditId, clearAutoEdit }) {
   const [hovering, setHovering] = useState(false);
   return (
     <div
@@ -1096,6 +1372,7 @@ function UnscheduledZone({ items, onMoveItem, onUpdateItem, onDeleteItem, draggi
       onDrop={(e) => {
         e.preventDefault();
         setHovering(false);
+        setDraggingId(null);
         const id = e.dataTransfer.getData('text/plain');
         if (id) onMoveItem(id, null);
       }}
@@ -1115,7 +1392,7 @@ function UnscheduledZone({ items, onMoveItem, onUpdateItem, onDeleteItem, draggi
       )}
       {items.map((item) => (
         <ItemCard
-          key={item.id} item={item} isStudent={false}
+          key={item.id} item={item} isStudent={false} canvas={canvas}
           onUpdate={onUpdateItem} onDelete={onDeleteItem}
           draggingId={draggingId} setDraggingId={setDraggingId}
           autoEdit={autoEditId === item.id}
@@ -1129,7 +1406,7 @@ function UnscheduledZone({ items, onMoveItem, onUpdateItem, onDeleteItem, draggi
 // ============================================================
 // ITEM CARD
 // ============================================================
-function ItemCard({ item, isStudent, onUpdate, onDelete, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
+function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
   const isAssign = item.type === 'assign';
   const isRich = item.type === 'rich';
   const [editing, setEditing] = useState(false);
@@ -1229,12 +1506,10 @@ function ItemCard({ item, isStudent, onUpdate, onDelete, draggingId, setDragging
 
         {isRich && (
           <>
-            <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-              <span style={pillStyle(accent, accentSoft)}>Reading / note</span>
-            </div>
             {editing && !isStudent ? (
               <RichEditor
                 initialHtml={item.html}
+                canvas={canvas}
                 onSave={(html) => { onUpdate(item.id, { html }); setEditing(false); }}
                 onCancel={() => setEditing(false)}
               />
@@ -1274,8 +1549,9 @@ function ItemCard({ item, isStudent, onUpdate, onDelete, draggingId, setDragging
 // ============================================================
 // RICH EDITOR
 // ============================================================
-function RichEditor({ initialHtml, onSave, onCancel }) {
+function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
   const ref = useRef(null);
+  const [canvasPicker, setCanvasPicker] = useState(null); // { type: 'files'|'pages', items: [] }
   useEffect(() => {
     if (ref.current) {
       ref.current.innerHTML = initialHtml || '<p></p>';
@@ -1290,8 +1566,35 @@ function RichEditor({ initialHtml, onSave, onCancel }) {
   }, []);
   const exec = (cmd, val = null) => { document.execCommand(cmd, false, val); ref.current?.focus(); };
   const insertLink = () => {
-    const url = window.prompt('Link URL (https://… or a Canvas file URL):');
-    if (url) exec('createLink', url);
+    const url = window.prompt('Link URL:');
+    if (!url) return;
+    const sel = window.getSelection();
+    const hasSelection = sel && sel.toString().trim().length > 0;
+    if (hasSelection) {
+      exec('createLink', url);
+    } else {
+      const text = window.prompt('Link text:', url);
+      const anchor = `<a href="${url}">${text || url}</a>`;
+      exec('insertHTML', anchor);
+    }
+  };
+  const canvasReady = canvas?.connected && canvas?.courseId;
+  const openCanvasPicker = async (type) => {
+    if (!canvasReady) return;
+    try {
+      const items = type === 'files'
+        ? await CanvasAPI.listFiles(canvas.baseUrl, canvas.token, canvas.courseId)
+        : await CanvasAPI.listPages(canvas.baseUrl, canvas.token, canvas.courseId);
+      setCanvasPicker({ type, items });
+    } catch { setCanvasPicker({ type, items: [], error: true }); }
+  };
+  const pickCanvasItem = (item) => {
+    const url = canvasPicker.type === 'files'
+      ? `${canvas.baseUrl.replace(/\/+$/, '')}/courses/${canvas.courseId}/files/${item.id}/download`
+      : `${canvas.baseUrl.replace(/\/+$/, '')}/courses/${canvas.courseId}/pages/${item.url}`;
+    const name = canvasPicker.type === 'files' ? item.display_name : item.title;
+    exec('insertHTML', `<a href="${url}">${name}</a>`);
+    setCanvasPicker(null);
   };
   return (
     <div>
@@ -1300,6 +1603,16 @@ function RichEditor({ initialHtml, onSave, onCancel }) {
         <ToolbarBtn onClick={() => exec('italic')}><Italic size={12} /></ToolbarBtn>
         <ToolbarBtn onClick={() => exec('insertUnorderedList')}>•</ToolbarBtn>
         <ToolbarBtn onClick={insertLink}><LinkIcon size={12} /></ToolbarBtn>
+        {canvasReady && (
+          <>
+            <ToolbarBtn onClick={() => openCanvasPicker('files')} title="Insert Canvas file link">
+              <FileText size={12} />
+            </ToolbarBtn>
+            <ToolbarBtn onClick={() => openCanvasPicker('pages')} title="Insert Canvas page link">
+              <BookOpen size={12} />
+            </ToolbarBtn>
+          </>
+        )}
         <div className="ml-auto flex gap-1">
           <button onClick={onCancel} style={{ fontFamily: FONT_MONO, fontSize: '10px', padding: '4px 8px', color: T.muted, border: `1px solid ${T.border}`, borderRadius: 2, background: T.paper }}>
             Cancel
@@ -1309,6 +1622,42 @@ function RichEditor({ initialHtml, onSave, onCancel }) {
           </button>
         </div>
       </div>
+      {canvasPicker && (
+        <div style={{
+          border: `1px solid ${T.border}`, borderRadius: 3, background: T.paper,
+          maxHeight: 180, overflowY: 'auto', marginBottom: 6, fontSize: '12px',
+        }}>
+          <div className="flex items-center justify-between" style={{ padding: '6px 8px', borderBottom: `1px solid ${T.border}`, background: T.subtle }}>
+            <span style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: T.muted }}>
+              {canvasPicker.type === 'files' ? 'Course files' : 'Course pages'}
+            </span>
+            <button onClick={() => setCanvasPicker(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.muted, padding: 0 }}>
+              <X size={12} />
+            </button>
+          </div>
+          {canvasPicker.error ? (
+            <div style={{ padding: 8, color: T.ox }}>Failed to load</div>
+          ) : canvasPicker.items.length === 0 ? (
+            <div style={{ padding: 8, color: T.muted }}>No {canvasPicker.type} found</div>
+          ) : (
+            canvasPicker.items.map((item) => (
+              <button
+                key={item.id || item.url}
+                onClick={() => pickCanvasItem(item)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px',
+                  background: 'none', border: 'none', borderBottom: `1px solid ${T.subtle}`,
+                  cursor: 'pointer', fontSize: '12px', color: T.ink, fontFamily: FONT_BODY,
+                }}
+                onMouseEnter={(e) => { e.target.style.background = T.inkBlueSoft; }}
+                onMouseLeave={(e) => { e.target.style.background = 'none'; }}
+              >
+                {canvasPicker.type === 'files' ? item.display_name : item.title}
+              </button>
+            ))
+          )}
+        </div>
+      )}
       <div
         ref={ref}
         className="planner-rich"
@@ -1388,7 +1737,7 @@ function SetupPanel({ state, updateState, onClose }) {
 // ============================================================
 // CANVAS PANEL
 // ============================================================
-function CanvasPanel({ state, updateState, onConnect, onRefresh, onClose }) {
+function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse, onClose }) {
   const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
   const [token, setToken] = useState(state.canvas.token || '');
   const [busy, setBusy] = useState(false);
@@ -1439,7 +1788,7 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onClose }) {
               </span>
               <select
                 value={state.canvas.courseId || ''}
-                onChange={(e) => updateState((s) => { s.canvas.courseId = e.target.value; return s; })}
+                onChange={(e) => onSwitchCourse(e.target.value)}
                 style={{ ...inputStyle, width: 'auto', minWidth: 220 }}>
                 <option value="">— pick a course —</option>
                 {state.canvas.courses.map((c) => (
