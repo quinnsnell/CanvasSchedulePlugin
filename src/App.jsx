@@ -155,21 +155,31 @@ const Store = {
 // CANVAS API
 // ============================================================
 const IS_DEV = import.meta.env.DEV;
+// Cloudflare Worker CORS proxy URL — set this after deploying with `npx wrangler deploy`
+const CORS_PROXY = 'https://canvas-cors-proxy.qsnell.workers.dev';
 
-// In dev mode, rewrite absolute Canvas URLs to go through the Vite proxy
+// Rewrite Canvas URLs: dev → Vite proxy, prod → Cloudflare Worker proxy
 function proxyUrl(absoluteUrl, baseUrl) {
-  if (!IS_DEV || !absoluteUrl || !baseUrl) return absoluteUrl;
+  if (!absoluteUrl || !baseUrl) return absoluteUrl;
   const base = baseUrl.replace(/\/+$/, '');
+  if (IS_DEV) {
+    if (absoluteUrl.startsWith(base)) return absoluteUrl.slice(base.length);
+    return absoluteUrl;
+  }
+  // Production: route through CORS proxy
+  const host = new URL(base).host;
   if (absoluteUrl.startsWith(base)) {
-    return absoluteUrl.slice(base.length); // turn into relative path
+    return `${CORS_PROXY}/${host}${absoluteUrl.slice(base.length)}`;
   }
   return absoluteUrl;
 }
 
 async function canvasFetch(baseUrl, token, path, opts = {}) {
+  const base = baseUrl.replace(/\/+$/, '');
+  const host = new URL(base).host;
   const url = IS_DEV
     ? `/api/v1${path}`
-    : `${baseUrl.replace(/\/+$/, '')}/api/v1${path}`;
+    : `${CORS_PROXY}/${host}/api/v1${path}`;
   const headers = {
     ...(opts.headers || {}),
     Authorization: `Bearer ${token}`,
@@ -256,9 +266,11 @@ const CanvasAPI = {
     const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
     if (!file) return null;
     // GET /files/:id with Authorization redirects to the file content
+    const base = baseUrl.replace(/\/+$/, '');
+    const host = new URL(base).host;
     const url = IS_DEV
       ? `/api/v1/files/${file.id}`
-      : `${baseUrl.replace(/\/+$/, '')}/api/v1/files/${file.id}`;
+      : `${CORS_PROXY}/${host}/api/v1/files/${file.id}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
       redirect: 'follow',
