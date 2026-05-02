@@ -557,20 +557,20 @@ export default function ClassPlannerApp() {
     return m;
   }, [state]);
 
-  // Keyboard shortcut: Ctrl/Cmd+Z for undo
+  // Keyboard shortcut: Ctrl/Cmd+Z for undo (uses ref to avoid stale closure)
+  const undoRef = useRef(null);
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        // Don't intercept if inside a contentEditable or input
         const tag = document.activeElement?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.contentEditable === 'true') return;
         e.preventDefault();
-        undo();
+        undoRef.current?.();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [undoStack]);
+  }, []);
 
   // Window focus → if pending creations exist & connected, sync from Canvas
   const syncRef = useRef(null);
@@ -613,6 +613,7 @@ export default function ClassPlannerApp() {
     setState(prev);
     showToast('Undone');
   };
+  undoRef.current = undo;
 
   // ------ Item creation ------
   const addNoteOnDay = (date) => {
