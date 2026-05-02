@@ -20,35 +20,40 @@ The app exists because Canvas's native syllabus and calendar pages don't offer a
 
 ```
 .
-├── index.html              # Vite entry, includes Tailwind CDN
+├── index.html                  # Vite entry, includes Tailwind CDN
 ├── package.json
-├── vite.config.js          # base: './' for sub-path deploys
-├── README.md               # human-facing
-├── CLAUDE.md               # you are here
+├── vite.config.js              # base: './' for sub-path deploys
+├── README.md                   # human-facing
+├── CLAUDE.md                   # you are here
+├── cors-proxy/
+│   ├── worker.js               # Cloudflare Worker CORS proxy (~50 lines)
+│   └── wrangler.toml           # Wrangler config for deployment
 └── src/
-    ├── main.jsx            # ReactDOM.createRoot
-    ├── index.css           # box-sizing reset only
-    └── App.jsx             # everything (~1300 lines, single-file by intention)
+    ├── main.jsx                # ReactDOM.createRoot + ErrorBoundary
+    ├── index.css               # box-sizing reset only
+    ├── theme.js                # Light/dark palettes, fonts, setTheme()
+    ├── utils.js                # Day codes, date math, iCal, Store (persistence)
+    ├── canvas-api.js           # CORS proxy config, Canvas REST API client
+    ├── App.jsx                 # Main component: state, handlers, layout
+    └── components/
+        ├── ui.jsx              # Shared primitives: Field, IconButton, ActionButton, etc.
+        ├── ClassDayRow.jsx     # Schedule row + AddDayPopover
+        ├── ItemCard.jsx        # Assignment/note card + RichEditor
+        ├── UnscheduledZone.jsx # Sidebar drop target
+        └── Panels.jsx          # SetupPanel, CanvasPanel, ShiftModal, EmptyState
 ```
 
-`App.jsx` is organized top-to-bottom as:
-
-| Section | Purpose |
+| Module | Purpose |
 |---|---|
-| `T`, `FONT_*` | Theme constants (warm/scholarly: cream, ink, ink-blue accent, sienna, amber for added days) |
-| `DAY_CODES`, `DAY_FULL`, `DAY_SHORT` | Day-of-week mappings |
-| `generateClassDays`, `computeAllDays`, `getAddableDatesAfter`, `weekKey` | Date math |
-| `Store` | Persistence wrapper (window.storage → localStorage fallback) |
-| `CanvasAPI` | `listCourses`, `listAssignments`, `setDueDate` |
-| `freshDemoState` | Demo seed for empty installs (CS 301 algorithms course) |
-| `ClassPlannerApp` | Default export. Top-level component, owns all state |
-| `ClassDayRow` | One row of the schedule grid |
-| `AddDayPopover` | Picker for adding a non-teaching date |
-| `UnscheduledZone` | Sidebar drop target for items without a date |
-| `ItemCard` | Renders an assignment or rich-text item |
-| `RichEditor` | contentEditable-based editor with bold/italic/list/link toolbar |
-| `SetupPanel`, `CanvasPanel` | Config drawers |
-| Small UI primitives | `IconButton`, `ToggleButton`, `ActionButton`, `ToolbarBtn`, `DayToolBtn`, `EmptyState`, `Field` |
+| `theme.js` | LIGHT/DARK palettes, `T` (mutable current palette), `setTheme()`, font constants |
+| `utils.js` | Day-of-week codes, date math (`generateClassDays`, `computeAllDays`, `weekKey`, etc.), `Store` persistence, iCal generation |
+| `canvas-api.js` | CORS proxy URL management, `canvasFetch()` wrapper, `CanvasAPI` methods (courses, assignments, files, pages, publish) |
+| `App.jsx` | `ClassPlannerApp` — owns all state, undo stack, Canvas sync, renders layout |
+| `components/ui.jsx` | `Field`, `IconButton`, `ToggleButton`, `ActionButton`, `ToolbarBtn`, `DayToolBtn`, style helpers |
+| `components/ClassDayRow.jsx` | One row of the schedule grid (date column + content column + day tools) |
+| `components/ItemCard.jsx` | Renders an assignment or rich-text card; includes `RichEditor` |
+| `components/UnscheduledZone.jsx` | Sidebar drop target for items without a date |
+| `components/Panels.jsx` | `SetupPanel`, `CanvasPanel`, `ShiftModal`, `EmptyState` |
 
 ## Data model
 
@@ -78,7 +83,10 @@ state = {
   schedule: { 'YYYY-MM-DD': [itemId, itemId, ...] },
   extraDays: ['YYYY-MM-DD', ...],   // explicit non-teaching dates added either manually or by off-day import
   unscheduled: [itemId, ...],       // items not placed on any day
+  holidays: { 'YYYY-MM-DD': 'label' },     // days marked as no-class
+  modules: { 'YYYY-MM-DD': 'title' },      // unit/module headers shown before a date
   pendingCreations: [{ id, date, time }],  // tracks "+ Assignment" clicks awaiting Canvas creation
+  loadedAt: ISO timestamp,                 // when last refreshed from Canvas (for conflict detection)
   studentView: bool,
 }
 ```
@@ -104,7 +112,7 @@ Opens `<base>/courses/<id>/assignments/new` in a new tab and pushes a `pendingCr
 
 ## Important constraints
 
-- **CORS**: Canvas API may block cross-origin browser requests depending on the institution's config. Symptoms: connect/refresh fails silently or with a CORS error in console. Solution: deploy a tiny proxy backend (Node, Cloudflare Worker, etc.) that forwards `Authorization` and proxies the responses with permissive CORS headers. Keep it under 50 lines.
+- **CORS**: Canvas API blocks cross-origin browser requests. In production, requests route through a Cloudflare Worker CORS proxy (`cors-proxy/worker.js`). The proxy URL is configurable per-institution via the Canvas panel UI, `VITE_CORS_PROXY` env var, or localStorage. In dev, Vite's built-in proxy handles it.
 - **Token safety**: Personal Access Token sits in `localStorage`. Acceptable for a single-instructor tool on their own machine. **Do NOT deploy this multi-tenant** — switch to OAuth2 or an LTI 1.3 integration if multiple instructors will use it.
 - **Mobile drag-and-drop**: HTML5 DnD is unreliable on touch. If full mobile editing matters, swap in `@dnd-kit/core` (recommended) or add explicit "Move to…" dropdowns on cards.
 - **Tailwind via CDN**: convenient for getting started but adds a runtime dependency on a third-party CDN. For production, swap to a PostCSS-based Tailwind build.
@@ -116,33 +124,30 @@ Opens `<base>/courses/<id>/assignments/new` in a new tab and pushes a `pendingCr
 
 ## Conventions
 
-- **Theme colors** live in the `T` object at the top of `App.jsx`. Don't introduce ad-hoc hex codes — extend `T` first.
+- **Theme colors** live in `src/theme.js` (LIGHT/DARK palettes). Don't introduce ad-hoc hex codes — extend the palette first.
+- **Theme switching**: `T` is a mutable module export reassigned by `setTheme()`. Style helpers in `ui.jsx` are functions (not constants) so they pick up the current palette on each render.
 - **Fonts**: `FONT_DISPLAY` (Fraunces) for headers/dates, `FONT_BODY` (Geist) for content, `FONT_MONO` (JetBrains Mono) for metadata/labels.
-- **Single-file**: keep it that way unless growth genuinely warrants splitting. The whole app fits comfortably in one mental model right now.
+- **Modular components**: each component file has a JSDoc header explaining its purpose. Keep components focused — split further only when a file exceeds ~400 lines.
 - **Inline styles + Tailwind utilities**: don't introduce a CSS-in-JS library or a `styles.module.css`. We picked this for portability.
 - **State updates** go through `updateState((s) => ...)` which `structuredClone`s the state. Don't mutate `state` directly outside this helper.
+- **Undo**: `updateState` auto-snapshots state before each change (up to 30 levels). Pass `skipUndo=true` for non-undoable bookkeeping (e.g., updating `loadedAt`).
 
 ## Outstanding work / good first issues
 
-- **Reorder items within a day's cell.** Currently dropping on a cell appends to the end. Adding insertion-position handling would let users reorder readings vs. assignments.
 - **"Move to…" tap menu** on cards for touch devices — would unlock mobile editing.
-- **Student view URL anchor** (`#student`) so a Canvas-embedded iframe can render read-only without the toggle.
-- **Holidays / breaks**: mark a teaching day as no-class without removing it (e.g., spring break Mondays).
-- **Module / unit headers**: optional grouping rows above blocks of weeks.
-- **iCal export** so students can subscribe.
-- **Print stylesheet** for a paper handout version.
 - **Full LTI 1.3** instead of token-based auth (much bigger effort; only do this if going multi-instructor).
-- **Reorder calls during the same day on +Day popover** — currently it always lists from "today + 1" forward; could allow inserting before the first day too.
 - **Tailwind PostCSS build** to drop the CDN dependency.
+- **Multi-page assignment support** — Canvas API pagination (Link headers) for courses with 100+ assignments.
 
 ## Quick reference: where to change common things
 
 | I want to… | Edit… |
 |---|---|
-| Change colors | `T` object near the top of `App.jsx` |
-| Change fonts | `FONT_DISPLAY` / `FONT_BODY` / `FONT_MONO` constants + the `@import` in the inline `<style>` |
-| Tweak week banding | Search `weekShade` and `isWeekStart` in `ClassDayRow` |
-| Add a Canvas API call | Add to the `CanvasAPI` object; uses `canvasFetch` helper |
-| Adjust mobile breakpoints | The `<style>` block inside the main component, look for `@media` |
-| Change demo data | `freshDemoState()` near the top |
-| Add a new item type | Extend `items[id].type` and update `ItemCard` to render it |
+| Change colors | LIGHT/DARK palettes in `src/theme.js` |
+| Change fonts | `FONT_DISPLAY` / `FONT_BODY` / `FONT_MONO` in `src/theme.js` + the `@import` in `App.jsx`'s `<style>` |
+| Tweak week banding | Search `weekShade` and `isWeekStart` in `components/ClassDayRow.jsx` |
+| Add a Canvas API call | Add to `CanvasAPI` in `src/canvas-api.js` |
+| Adjust mobile breakpoints | The `<style>` block in `App.jsx`, look for `@media` |
+| Add a new item type | Extend `items[id].type` and update `components/ItemCard.jsx` to render it |
+| Add a shared button variant | Add to `components/ui.jsx` |
+| Change CORS proxy default | `CORS_PROXY_DEFAULT` in `src/canvas-api.js` |
