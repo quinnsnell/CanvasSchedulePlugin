@@ -431,6 +431,39 @@ export default function ClassPlannerApp() {
       }
       setState(init);
       setLoaded(true);
+
+      // Auto-reconnect: if we have saved credentials, verify them and refresh course list
+      if (!hashStudent && meta?.baseUrl && meta?.token) {
+        try {
+          const courses = await CanvasAPI.listCourses(meta.baseUrl, meta.token);
+          setState((prev) => {
+            const s = structuredClone(prev);
+            s.canvas.baseUrl = meta.baseUrl;
+            s.canvas.token = meta.token;
+            s.canvas.connected = true;
+            s.canvas.courses = courses.map((c) => ({
+              id: c.id, name: c.name,
+              startAt: c.start_at || c.term?.start_at || null,
+              endAt: c.end_at || c.term?.end_at || null,
+            }));
+            if (meta.courseId) {
+              s.canvas.courseId = meta.courseId;
+              const course = s.canvas.courses.find((c) => String(c.id) === String(meta.courseId));
+              if (course?.startAt && !s.setup.startDate) s.setup.startDate = course.startAt.slice(0, 10);
+              if (course?.endAt && !s.setup.endDate) s.setup.endDate = course.endAt.slice(0, 10);
+              if (course?.name) s.setup.courseTitle = course.name;
+            }
+            return s;
+          });
+        } catch {
+          // Token expired or invalid — clear connected state, user will need to re-enter
+          setState((prev) => {
+            const s = structuredClone(prev);
+            s.canvas.connected = false;
+            return s;
+          });
+        }
+      }
     })();
   }, []);
 
