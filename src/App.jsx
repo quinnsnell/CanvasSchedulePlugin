@@ -727,7 +727,7 @@ export default function ClassPlannerApp() {
       });
       if (!content) content = `<div style="padding: 4px 0;">&nbsp;</div>`;
 
-      rows += `<tr style="background: ${bgColor};">
+      rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border};">
         <td style="padding: 14px 16px; border-right: 1px solid ${T.border}; vertical-align: top; width: 170px;">
           <div style="font-family: Georgia, serif; font-weight: 500; color: ${T.ink}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
           <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px;">${dayName}</div>
