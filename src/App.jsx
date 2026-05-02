@@ -3,7 +3,7 @@ import {
   Plus, X, FileText, GripVertical, Eye, EyeOff, Settings, RefreshCw,
   Trash2, AlertCircle, Check, BookOpen, Pencil, Bold, Italic,
   Link as LinkIcon, ExternalLink, Calendar, Info, Cloud, CloudOff,
-  ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload, Download
+  ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload
 } from 'lucide-react';
 
 // ============================================================
@@ -12,7 +12,7 @@ import {
 const T = {
   cream: '#F7F3EA', paper: '#FFFFFF', subtle: '#EFE9DB',
   ink: '#1A1410', inkMid: '#3D362E', muted: '#756B5C', faint: '#B5AC9A',
-  border: '#E5DFD0', borderStrong: '#C7BFA8',
+  border: '#C7BFA8', borderStrong: '#A89F8E',
   inkBlue: '#1F3A60', inkBlueSoft: '#E8EDF4',
   sienna: '#A04A2A', siennaSoft: '#F5E9DF',
   forest: '#2F6B3A', ox: '#8B2E1F',
@@ -778,28 +778,6 @@ export default function ClassPlannerApp() {
     }
   };
 
-  const loadFromCanvas = async () => {
-    const s = stateRef.current;
-    if (!s?.canvas?.connected || !s.canvas.courseId) {
-      showToast('Connect to Canvas and pick a course first', 'err');
-      return;
-    }
-    try {
-      const data = await CanvasAPI.downloadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
-      if (!data) { showToast('No published schedule found', 'err'); return; }
-      updateState((s) => {
-        s.setup = data.setup;
-        s.items = data.items;
-        s.schedule = data.schedule;
-        s.extraDays = data.extraDays;
-        s.unscheduled = data.unscheduled || [];
-        return s;
-      });
-      showToast('Loaded schedule from Canvas');
-    } catch (e) {
-      showToast(`Load failed: ${e.message}`, 'err');
-    }
-  };
 
   // ------ Canvas connect / import / refresh ------
   const connectCanvas = async (baseUrl, token) => {
@@ -1062,9 +1040,6 @@ export default function ClassPlannerApp() {
                       <IconButton onClick={publishToCanvas} title="Publish schedule to Canvas course files">
                         <Upload size={16} />
                       </IconButton>
-                      <IconButton onClick={loadFromCanvas} title="Load schedule from Canvas course files">
-                        <Download size={16} />
-                      </IconButton>
                     </>
                   )}
                   <IconButton onClick={() => setShowCanvas((v) => !v)} title="Canvas connection">
@@ -1115,17 +1090,6 @@ export default function ClassPlannerApp() {
       <main className={`planner-shell planner-main ${!isStudent ? 'with-sidebar' : ''}`}
             style={{ maxWidth: 1152, margin: '0 auto' }}>
         <section style={{ minWidth: 0 }}>
-          {!isStudent && (
-            <div className="flex items-start gap-2 mb-4" style={{ color: T.muted, fontFamily: FONT_MONO, fontSize: '11px', lineHeight: 1.4 }}>
-              <Info size={12} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>
-                Assignments come from Canvas (cloud icon → Connect & Refresh). Drag cards between days.
-                Date column has <CalendarPlus size={11} style={{ display: 'inline', verticalAlign: '-2px' }} /> to add a non-teaching date.
-                Content column has <FileText size={11} style={{ display: 'inline', verticalAlign: '-2px' }} /> Note and <BookOpen size={11} style={{ display: 'inline', verticalAlign: '-2px' }} /> Assignment.
-              </span>
-            </div>
-          )}
-
           {allDays.length === 0 ? (
             <EmptyState onSetup={() => setShowSetup(true)} />
           ) : (
