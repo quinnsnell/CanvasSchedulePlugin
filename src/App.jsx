@@ -695,7 +695,8 @@ export default function ClassPlannerApp() {
       prevWk = wk;
       const isExtra = !teaching.has(d);
       const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
-      const bgColor = isExtra ? T.amberSoft : (weekNumber(d) % 2 === 1 ? '#F2EBDA' : T.paper);
+      const shadedWeek = weekNumber(d) % 2 === 1;
+      const bgColor = isExtra ? T.amberSoft : (shadedWeek ? '#F2EBDA' : T.paper);
 
       // Week label row
       if (isNewWeek) {
@@ -727,7 +728,8 @@ export default function ClassPlannerApp() {
       });
       if (!content) content = `<div style="padding: 4px 0;">&nbsp;</div>`;
 
-      rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border}; box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);">
+      const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
+      rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border}; box-shadow: ${rowShadow};">
         <td style="padding: 14px 16px; border-right: 1px solid ${T.border}; vertical-align: top; width: 170px;">
           <div style="font-family: Georgia, serif; font-weight: 500; color: ${T.ink}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
           <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px;">${dayName}</div>
@@ -1199,7 +1201,7 @@ function ClassDayRow({
   return (
     <div className="day-row" style={{
       borderBottom: `1px solid ${T.border}`,
-      boxShadow: isWeekStart ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.7)',
+      boxShadow: isWeekStart ? 'none' : (weekShade ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)'),
       borderTop: isWeekStart ? `2px solid ${T.borderStrong}` : 'none',
       background: rowBg,
     }}>
