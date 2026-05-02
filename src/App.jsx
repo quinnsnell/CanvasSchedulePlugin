@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Plus, X, FileText, GripVertical, Eye, EyeOff, Settings, RefreshCw,
   Trash2, AlertCircle, Check, BookOpen, Pencil, Bold, Italic,
   Link as LinkIcon, ExternalLink, Calendar, Info, Cloud, CloudOff,
-  ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload
+  ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload,
+  Copy, Undo2, ChevronRight, ChevronLeft, Printer, CalendarDays, Ban
 } from 'lucide-react';
 
 // ============================================================
@@ -104,6 +105,33 @@ const fmtFull = (iso) => {
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 };
+
+// Generate iCal (.ics) content from schedule data
+function generateICal(state) {
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ClassPlanner//EN', 'CALSCALE:GREGORIAN',
+    `X-WR-CALNAME:${state.setup.courseTitle || 'Course Schedule'}`,
+  ];
+  const allDays = computeAllDays(state.setup, state.extraDays);
+  allDays.forEach((d) => {
+    const items = (state.schedule[d] || []).map((id) => state.items[id]).filter(Boolean);
+    if (items.length === 0) return;
+    const dateStr = d.replace(/-/g, '');
+    items.forEach((item, i) => {
+      const summary = item.type === 'assign'
+        ? `${item.title || 'Assignment'}${item.points ? ` (${item.points} pts)` : ''}`
+        : (item.html || '').replace(/<[^>]*>/g, '').trim().slice(0, 120) || 'Note';
+      lines.push('BEGIN:VEVENT');
+      lines.push(`DTSTART;VALUE=DATE:${dateStr}`);
+      lines.push(`DTEND;VALUE=DATE:${dateStr}`);
+      lines.push(`SUMMARY:${summary.replace(/[,;\\]/g, ' ')}`);
+      lines.push(`UID:${d}-${i}-${item.id}@classplanner`);
+      lines.push('END:VEVENT');
+    });
+  });
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
 
 // ============================================================
 // STORAGE
@@ -392,6 +420,8 @@ export default function ClassPlannerApp() {
   const [draggingId, setDraggingId] = useState(null);
   const [autoEditId, setAutoEditId] = useState(null);
   const [studentEmbed, setStudentEmbed] = useState(null);
+  const [undoStack, setUndoStack] = useState([]);
+  const [showShiftModal, setShowShiftModal] = useState(false);
   const stateRef = useRef(null);
   const hashStudent = window.location.hash === '#student';
 
@@ -499,6 +529,21 @@ export default function ClassPlannerApp() {
     return m;
   }, [state]);
 
+  // Keyboard shortcut: Ctrl/Cmd+Z for undo
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        // Don't intercept if inside a contentEditable or input
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.contentEditable === 'true') return;
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undoStack]);
+
   // Window focus → if pending creations exist & connected, sync from Canvas
   const syncRef = useRef(null);
   useEffect(() => {
@@ -527,7 +572,19 @@ export default function ClassPlannerApp() {
     );
   }
 
-  const updateState = (fn) => setState((s) => fn(structuredClone(s)));
+  const updateState = (fn, skipUndo) => {
+    setState((s) => {
+      if (!skipUndo) setUndoStack((stack) => [...stack.slice(-29), structuredClone(s)]);
+      return fn(structuredClone(s));
+    });
+  };
+  const undo = () => {
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setUndoStack((stack) => stack.slice(0, -1));
+    setState(prev);
+    showToast('Undone');
+  };
 
   // ------ Item creation ------
   const addNoteOnDay = (date) => {
@@ -583,6 +640,107 @@ export default function ClassPlannerApp() {
       delete s.schedule[date];
       return s;
     });
+  };
+
+  // ------ Duplicate item ------
+  const duplicateItem = (id, date) => {
+    const orig = state.items[id];
+    if (!orig) return;
+    const newId = uid();
+    updateState((s) => {
+      s.items[newId] = { ...structuredClone(orig), id: newId, canvasId: null, isDemo: false };
+      if (date && s.schedule[date]) {
+        const idx = s.schedule[date].indexOf(id);
+        s.schedule[date].splice(idx + 1, 0, newId);
+      } else if (date) {
+        s.schedule[date] = s.schedule[date] || [];
+        s.schedule[date].push(newId);
+      } else {
+        s.unscheduled.push(newId);
+      }
+      return s;
+    });
+    showToast('Item duplicated');
+  };
+
+  // ------ Holiday / no-class toggle ------
+  const toggleHoliday = (date) => {
+    updateState((s) => {
+      if (!s.holidays) s.holidays = {};
+      if (s.holidays[date]) {
+        delete s.holidays[date];
+      } else {
+        const label = window.prompt('Holiday label (e.g., "Labor Day"):', 'No Class');
+        s.holidays[date] = label || 'No Class';
+      }
+      return s;
+    });
+  };
+
+  // ------ Module / unit headers ------
+  const addModuleHeader = (beforeDate) => {
+    const title = window.prompt('Module / unit title:');
+    if (!title) return;
+    updateState((s) => {
+      if (!s.modules) s.modules = {};
+      s.modules[beforeDate] = title;
+      return s;
+    });
+  };
+  const removeModuleHeader = (date) => {
+    updateState((s) => {
+      if (s.modules) delete s.modules[date];
+      return s;
+    });
+  };
+
+  // ------ Bulk date shift ------
+  const bulkShift = (days) => {
+    updateState((s) => {
+      // Shift setup dates
+      if (s.setup.startDate) s.setup.startDate = addDays(s.setup.startDate, days);
+      if (s.setup.endDate) s.setup.endDate = addDays(s.setup.endDate, days);
+      // Shift extra days
+      s.extraDays = s.extraDays.map((d) => addDays(d, days));
+      // Shift schedule
+      const newSchedule = {};
+      Object.keys(s.schedule).forEach((d) => {
+        newSchedule[addDays(d, days)] = s.schedule[d];
+      });
+      s.schedule = newSchedule;
+      // Shift holidays
+      if (s.holidays) {
+        const newHolidays = {};
+        Object.keys(s.holidays).forEach((d) => { newHolidays[addDays(d, days)] = s.holidays[d]; });
+        s.holidays = newHolidays;
+      }
+      // Shift modules
+      if (s.modules) {
+        const newModules = {};
+        Object.keys(s.modules).forEach((d) => { newModules[addDays(d, days)] = s.modules[d]; });
+        s.modules = newModules;
+      }
+      // Shift item due dates
+      Object.values(s.items).forEach((item) => {
+        if (item.dueDate) item.dueDate = addDays(item.dueDate, days);
+      });
+      return s;
+    });
+    showToast(`Shifted schedule by ${days > 0 ? '+' : ''}${days} day${Math.abs(days) !== 1 ? 's' : ''}`);
+    setShowShiftModal(false);
+  };
+
+  // ------ iCal export ------
+  const exportICal = () => {
+    const ics = generateICal(state);
+    const blob = new Blob([ics], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(state.setup.courseTitle || 'schedule').replace(/[^a-zA-Z0-9]/g, '_')}.ics`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Calendar file downloaded');
   };
 
   // ------ Course switching ------
@@ -696,15 +854,18 @@ export default function ClassPlannerApp() {
       const isExtra = !teaching.has(d);
       const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
       const shadedWeek = weekNumber(d) % 2 === 1;
-      const bgColor = isExtra ? T.amberSoft : (shadedWeek ? '#F2EBDA' : T.paper);
+      const holidayLabel = s.holidays?.[d];
+      const bgColor = holidayLabel ? '#f0ece4' : (isExtra ? T.amberSoft : (shadedWeek ? '#F2EBDA' : T.paper));
+
+      // Module header
+      const moduleTitle = s.modules?.[d];
+      if (moduleTitle) {
+        rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${T.ink}; background: ${T.subtle}; border-bottom: 1px solid ${T.border};">${moduleTitle}</td></tr>`;
+      }
 
       // Week label row
       if (isNewWeek) {
-        const weekStart = new Date(wk + 'T00:00:00');
-        const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
-        const weekLabel = `Week of ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
         rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${T.borderStrong};"></div></td></tr>`;
-        // The week label is shown inside the date cell of the first row
       }
 
       let content = '';
@@ -726,10 +887,15 @@ export default function ClassPlannerApp() {
           </div>`;
         }
       });
-      if (!content) content = `<div style="padding: 4px 0;">&nbsp;</div>`;
+      if (holidayLabel) {
+        content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: ${T.ox}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
+      } else if (!content) {
+        content = `<div style="padding: 4px 0;">&nbsp;</div>`;
+      }
 
       const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
-      rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border}; box-shadow: ${rowShadow};">
+      const rowOpacity = holidayLabel ? 'opacity: 0.7;' : '';
+      rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border}; box-shadow: ${rowShadow}; ${rowOpacity}">
         <td style="padding: 14px 16px; border-right: 1px solid ${T.border}; vertical-align: top; width: 170px;">
           <div style="font-family: Georgia, serif; font-weight: 500; color: ${T.ink}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
           <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px;">${dayName}</div>
@@ -763,6 +929,8 @@ export default function ClassPlannerApp() {
         schedule: s.schedule,
         extraDays: s.extraDays,
         unscheduled: s.unscheduled,
+        holidays: s.holidays || {},
+        modules: s.modules || {},
         publishedAt: new Date().toISOString(),
       };
       await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
@@ -906,6 +1074,8 @@ export default function ClassPlannerApp() {
         s.schedule = published.schedule || {};
         s.extraDays = published.extraDays || [];
         s.unscheduled = published.unscheduled || [];
+        s.holidays = published.holidays || {};
+        s.modules = published.modules || {};
       } else {
         s.items = {};
         s.schedule = {};
@@ -1008,6 +1178,39 @@ export default function ClassPlannerApp() {
         @media (min-width: 640px) { .col-header { padding: 10px 16px; font-size: 10px; letter-spacing: 0.2em; } }
 
         .day-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+        .holiday-row { position: relative; }
+        .holiday-row::after {
+          content: '';
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(0,0,0,0.03) 8px, rgba(0,0,0,0.03) 16px);
+          pointer-events: none;
+        }
+
+        .module-header {
+          padding: 10px 16px;
+          font-family: ${FONT_DISPLAY};
+          font-size: 16px;
+          font-weight: 600;
+          color: ${T.ink};
+          background: ${T.subtle};
+          border-bottom: 1px solid ${T.border};
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        @media print {
+          body { background: white !important; }
+          header, footer, aside, .day-tools, .planner-header-row button,
+          .planner-header-row .flex, [title="Drag to move"] { display: none !important; }
+          .planner-shell { padding: 0 !important; }
+          .planner-main { display: block !important; }
+          .day-row { break-inside: avoid; }
+          .planner-card { break-inside: avoid; box-shadow: none !important; }
+          .item-dragging { opacity: 1 !important; }
+          @page { margin: 0.5in; }
+        }
       `}</style>
 
       {/* HEADER */}
@@ -1035,14 +1238,24 @@ export default function ClassPlannerApp() {
                   {isStudent ? 'Student' : 'Editor'}
                 </ToggleButton>
               )}
+              <IconButton onClick={exportICal} title="Download iCal file">
+                <CalendarDays size={16} />
+              </IconButton>
+              <IconButton onClick={() => window.print()} title="Print schedule">
+                <Printer size={16} />
+              </IconButton>
               {!isStudent && (
                 <>
+                  <IconButton onClick={undo} title="Undo (Ctrl+Z)" disabled={undoStack.length === 0}>
+                    <Undo2 size={16} color={undoStack.length === 0 ? T.faint : T.ink} />
+                  </IconButton>
+                  <IconButton onClick={() => setShowShiftModal(true)} title="Shift all dates">
+                    <ChevronRight size={16} />
+                  </IconButton>
                   {state.canvas.connected && state.canvas.courseId && (
-                    <>
-                      <IconButton onClick={publishToCanvas} title="Publish schedule to Canvas course files">
-                        <Upload size={16} />
-                      </IconButton>
-                    </>
+                    <IconButton onClick={publishToCanvas} title="Publish schedule to Canvas course files">
+                      <Upload size={16} />
+                    </IconButton>
                   )}
                   <IconButton onClick={() => setShowCanvas((v) => !v)} title="Canvas connection">
                     {state.canvas.connected ? <Cloud size={16} color={T.forest} /> : <CloudOff size={16} color={T.muted} />}
@@ -1056,6 +1269,10 @@ export default function ClassPlannerApp() {
           </div>
         </div>
       </header>
+
+      {showShiftModal && (
+        <ShiftModal onShift={bulkShift} onClose={() => setShowShiftModal(false)} />
+      )}
 
       {studentEmbed && !isStudent && (
         <div style={{ background: T.subtle, borderBottom: `1px solid ${T.border}`, padding: '12px 24px' }}>
@@ -1109,29 +1326,46 @@ export default function ClassPlannerApp() {
                   const weekIdx = weekNumber(d);
                   const isWeekStart = idx > 0 && k !== prevKey;
                   prevKey = k;
+                  const moduleTitle = state.modules?.[d];
+                  const holidayLabel = state.holidays?.[d];
                   return (
-                  <ClassDayRow
-                    key={d}
-                    date={d} index={idx} isExtra={isExtra}
-                    weekIdx={weekIdx} isWeekStart={isWeekStart}
-                    items={items}
-                    isStudent={isStudent}
-                    canvas={state.canvas}
-                    canvasReady={state.canvas.connected && !!state.canvas.courseId}
-                    pendingCount={pendingByDate[d] || 0}
-                    onMoveItem={moveItem}
-                    onUpdateItem={updateItem}
-                    onDeleteItem={deleteItem}
-                    onAddNote={() => addNoteOnDay(d)}
-                    onAddAssignment={() => startAssignmentCreation(d)}
-                    onAddExtraDay={addExtraDay}
-                    onRemoveExtraDay={() => removeExtraDay(d)}
-                    addableDates={getAddableDatesAfter(d, allDaysSet, state.setup.endDate)}
-                    draggingId={draggingId}
-                    setDraggingId={setDraggingId}
-                    autoEditId={autoEditId}
-                    clearAutoEdit={() => setAutoEditId(null)}
-                  />
+                  <React.Fragment key={d}>
+                    {moduleTitle && (
+                      <div className="module-header">
+                        <span>{moduleTitle}</span>
+                        {!isStudent && (
+                          <button onClick={() => removeModuleHeader(d)} style={iconBtnStyle} title="Remove module header">
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <ClassDayRow
+                      date={d} index={idx} isExtra={isExtra}
+                      weekIdx={weekIdx} isWeekStart={isWeekStart}
+                      items={items}
+                      isStudent={isStudent}
+                      canvas={state.canvas}
+                      canvasReady={state.canvas.connected && !!state.canvas.courseId}
+                      pendingCount={pendingByDate[d] || 0}
+                      holidayLabel={holidayLabel}
+                      onMoveItem={moveItem}
+                      onUpdateItem={updateItem}
+                      onDeleteItem={deleteItem}
+                      onDuplicate={(id) => duplicateItem(id, d)}
+                      onAddNote={() => addNoteOnDay(d)}
+                      onAddAssignment={() => startAssignmentCreation(d)}
+                      onAddExtraDay={addExtraDay}
+                      onRemoveExtraDay={() => removeExtraDay(d)}
+                      onToggleHoliday={() => toggleHoliday(d)}
+                      onAddModule={() => addModuleHeader(d)}
+                      addableDates={getAddableDatesAfter(d, allDaysSet, state.setup.endDate)}
+                      draggingId={draggingId}
+                      setDraggingId={setDraggingId}
+                      autoEditId={autoEditId}
+                      clearAutoEdit={() => setAutoEditId(null)}
+                    />
+                  </React.Fragment>
                 );
               });
               })()}
@@ -1184,9 +1418,10 @@ export default function ClassPlannerApp() {
 // ============================================================
 function ClassDayRow({
   date, index, isExtra, items, isStudent, canvas, canvasReady, pendingCount,
-  weekIdx, isWeekStart,
-  onMoveItem, onUpdateItem, onDeleteItem,
+  weekIdx, isWeekStart, holidayLabel,
+  onMoveItem, onUpdateItem, onDeleteItem, onDuplicate,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
+  onToggleHoliday, onAddModule,
   addableDates, draggingId, setDraggingId,
   autoEditId, clearAutoEdit,
 }) {
@@ -1199,11 +1434,12 @@ function ClassDayRow({
   const dayLabel = DAY_FULL[DAY_CODES[d.getDay()]];
 
   return (
-    <div className="day-row" style={{
+    <div className={`day-row${holidayLabel ? ' holiday-row' : ''}`} style={{
       borderBottom: `1px solid ${T.border}`,
       boxShadow: isWeekStart ? 'none' : (weekShade ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)'),
       borderTop: isWeekStart ? `2px solid ${T.borderStrong}` : 'none',
-      background: rowBg,
+      background: holidayLabel ? '#f0ece4' : rowBg,
+      opacity: holidayLabel ? 0.7 : 1,
     }}>
       {/* DATE COLUMN */}
       <div className="date-col">
@@ -1217,7 +1453,15 @@ function ClassDayRow({
         )}
         <div className="date-num">{fmtMonthDay(date)}</div>
         <div className="date-day">{dayLabel}</div>
-        {isExtra && (
+        {holidayLabel && (
+          <div style={{
+            display: 'inline-block', marginTop: 6,
+            fontFamily: FONT_MONO, fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase',
+            color: T.ox, background: '#fff', border: `1px solid ${T.ox}44`,
+            padding: '1px 5px', borderRadius: 2,
+          }}>{holidayLabel}</div>
+        )}
+        {isExtra && !holidayLabel && (
           <div style={{
             display: 'inline-block', marginTop: 6,
             fontFamily: FONT_MONO, fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase',
@@ -1259,6 +1503,12 @@ function ClassDayRow({
                 <MinusCircle size={11} />
               </DayToolBtn>
             )}
+            <DayToolBtn onClick={onToggleHoliday} title={holidayLabel ? 'Remove holiday' : 'Mark as holiday / no class'}>
+              <Ban size={11} />
+            </DayToolBtn>
+            <DayToolBtn onClick={onAddModule} title="Add module/unit header before this day">
+              <ListPlus size={11} />
+            </DayToolBtn>
           </div>
         )}
       </div>
@@ -1295,13 +1545,14 @@ function ClassDayRow({
           <ItemCard
             key={item.id} item={item} isStudent={isStudent} canvas={canvas}
             onUpdate={onUpdateItem} onDelete={onDeleteItem}
+            onDuplicate={() => onDuplicate(item.id)}
             draggingId={draggingId} setDraggingId={setDraggingId}
             autoEdit={autoEditId === item.id}
             onAutoEditConsumed={clearAutoEdit}
           />
         ))}
 
-        {!isStudent && (
+        {!isStudent && !holidayLabel && (
           <div className="day-tools" style={{ marginTop: 'auto', paddingTop: 6 }}>
             <DayToolBtn onClick={onAddNote} title="Add a reading / note on this day">
               <FileText size={11} /> Note
@@ -1415,7 +1666,7 @@ function UnscheduledZone({ items, canvas, onMoveItem, onUpdateItem, onDeleteItem
 // ============================================================
 // ITEM CARD
 // ============================================================
-function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
+function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
   const isAssign = item.type === 'assign';
   const isRich = item.type === 'rich';
   const [editing, setEditing] = useState(false);
@@ -1544,6 +1795,11 @@ function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, draggingId, set
           {isAssign && (
             <button onClick={() => setTitleEditing(true)} title="Rename" style={iconBtnStyle}>
               <Pencil size={13} />
+            </button>
+          )}
+          {onDuplicate && (
+            <button onClick={onDuplicate} title="Duplicate" style={iconBtnStyle}>
+              <Copy size={13} />
             </button>
           )}
           <button onClick={() => onDelete(item.id)} title="Delete" style={iconBtnStyle}>
@@ -1925,6 +2181,46 @@ function DayToolBtn({ children, onClick, title, disabled }) {
       }}>
       {children}
     </button>
+  );
+}
+function ShiftModal({ onShift, onClose }) {
+  const [days, setDays] = useState(7);
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.4)', zIndex: 40,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: T.paper, borderRadius: 6, padding: 24,
+        boxShadow: '0 12px 40px rgba(0,0,0,0.2)', maxWidth: 360, width: '90%',
+      }}>
+        <h3 style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600, marginBottom: 12 }}>
+          Shift all dates
+        </h3>
+        <p style={{ fontSize: '13px', color: T.muted, marginBottom: 16 }}>
+          Move the entire schedule forward or backward by a number of days.
+          Semester start/end, all items, holidays, and modules will shift together.
+        </p>
+        <div className="flex items-center gap-3 mb-4">
+          <button onClick={() => setDays((d) => d - 1)} style={{ ...iconBtnStyle, border: `1px solid ${T.border}`, padding: 6, borderRadius: 3 }}>
+            <ChevronLeft size={16} />
+          </button>
+          <input type="number" value={days} onChange={(e) => setDays(Number(e.target.value))}
+            style={{ ...inputStyle, width: 80, textAlign: 'center' }} />
+          <button onClick={() => setDays((d) => d + 1)} style={{ ...iconBtnStyle, border: `1px solid ${T.border}`, padding: 6, borderRadius: 3 }}>
+            <ChevronRight size={16} />
+          </button>
+          <span style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted }}>days</span>
+        </div>
+        <div className="flex justify-end gap-2">
+          <ActionButton onClick={onClose}>Cancel</ActionButton>
+          <ActionButton onClick={() => onShift(days)} primary>
+            Shift {days > 0 ? `+${days}` : days} days
+          </ActionButton>
+        </div>
+      </div>
+    </div>
   );
 }
 function EmptyState({ onSetup }) {
