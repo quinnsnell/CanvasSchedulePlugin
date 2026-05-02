@@ -202,8 +202,16 @@ const Store = {
 // CANVAS API
 // ============================================================
 const IS_DEV = import.meta.env.DEV;
-// Cloudflare Worker CORS proxy URL — set this after deploying with `npx wrangler deploy`
-const CORS_PROXY = 'https://canvas-cors-proxy.qsnell.workers.dev';
+// CORS proxy URL: set via VITE_CORS_PROXY env var at build time, or enter in settings.
+// Falls back to stored value from localStorage, then to hardcoded default.
+const CORS_PROXY_DEFAULT = 'https://canvas-cors-proxy.qsnell.workers.dev';
+function getCorsProxy() {
+  const env = import.meta.env.VITE_CORS_PROXY;
+  if (env) return env.replace(/\/+$/, '');
+  try { const v = localStorage.getItem('planner-cors-proxy'); if (v) return v; } catch {}
+  return CORS_PROXY_DEFAULT;
+}
+let CORS_PROXY = getCorsProxy();
 
 // Rewrite Canvas URLs: dev → Vite proxy, prod → Cloudflare Worker proxy
 function proxyUrl(absoluteUrl, baseUrl) {
@@ -375,53 +383,20 @@ const CanvasAPI = {
 };
 
 // ============================================================
-// DEMO DATA
+// INITIAL STATE
 // ============================================================
-const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => {
   const d = new Date(iso + 'T00:00:00');
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 };
 
-function freshDemoState() {
-  const start = today();
-  const end = addDays(start, 70);
-  const items = {};
-  const schedule = {};
-  const extraDays = [];
-  const teaching = generateClassDays(start, end, ['MO','WE','FR']);
-
-  const seed = [
-    { type: 'rich', html: '<p><b>Read:</b> Cormen Ch. 1 (Foundations)</p><p><a href="#">📎 Lecture 1 slides</a></p>', dayIdx: 0 },
-    { type: 'assign', title: 'Problem Set 1', points: 50, dayIdx: 2 },
-    { type: 'rich', html: '<p><b>Read:</b> Cormen §2.1–2.3</p><p>Bring a laptop; we&rsquo;ll trace insertion sort.</p>', dayIdx: 1 },
-    { type: 'assign', title: 'Quiz 1: Asymptotics', points: 20, dayIdx: 4 },
-    { type: 'rich', html: '<p><b>Read:</b> Cormen §4.3–4.5 (Recurrences)</p>', dayIdx: 3 },
-    { type: 'assign', title: 'Problem Set 2', points: 60, dayIdx: 6 },
-  ];
-  // demo: assignment due on a non-teaching day → auto-added day
-  const offDay = teaching[3] ? addDays(teaching[3], 1) : null;
-  if (offDay) {
-    extraDays.push(offDay);
-    const id = uid();
-    items[id] = { id, type: 'assign', title: 'Take-home midterm draft', points: 40, canvasId: null, dueDate: offDay, isDemo: true };
-    schedule[offDay] = [id];
-  }
-  seed.forEach((s) => {
-    const id = uid();
-    if (s.type === 'rich') items[id] = { id, type: 'rich', html: s.html };
-    else items[id] = { id, type: 'assign', title: s.title, points: s.points, canvasId: null, isDemo: true };
-    const date = teaching[Math.min(s.dayIdx, teaching.length - 1)];
-    if (!date) return;
-    schedule[date] = schedule[date] || [];
-    schedule[date].push(id);
-    if (s.type === 'assign') items[id].dueDate = date;
-  });
+function freshState() {
   return {
-    setup: { courseTitle: 'CS 301 — Algorithms', startDate: start, endDate: end, classDays: ['MO','WE','FR'] },
+    setup: { courseTitle: '', startDate: '', endDate: '', classDays: ['MO','WE','FR'] },
     canvas: { baseUrl: '', token: '', courseId: '', connected: false, courses: [] },
-    items, schedule, extraDays, unscheduled: [],
+    items: {}, schedule: {}, extraDays: [], unscheduled: [],
+    holidays: {}, modules: {},
     pendingCreations: [],
     studentView: false,
   };
@@ -459,7 +434,7 @@ export default function ClassPlannerApp() {
       const meta = await Store.loadMeta();
       const courseId = meta?.courseId || '';
       const saved = await Store.load(courseId);
-      const init = saved || freshDemoState();
+      const init = saved || freshState();
       if (!init.pendingCreations) init.pendingCreations = [];
       // Restore canvas connection from meta
       if (meta && !init.canvas.connected && meta.baseUrl && meta.token) {
@@ -966,7 +941,22 @@ export default function ClassPlannerApp() {
       return;
     }
     try {
+      // Conflict detection: check if someone else published since we last loaded
+      const remote = await CanvasAPI.downloadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId).catch(() => null);
+      if (remote?.publishedAt && s.loadedAt && remote.publishedAt > s.loadedAt) {
+        const overwrite = window.confirm(
+          `Someone else published changes at ${new Date(remote.publishedAt).toLocaleString()}.\n\n` +
+          `You loaded your copy at ${new Date(s.loadedAt).toLocaleString()}.\n\n` +
+          `Publish anyway and overwrite their changes?`
+        );
+        if (!overwrite) {
+          showToast('Publish cancelled — use Refresh to load their changes first', 'err');
+          return;
+        }
+      }
+
       // Save JSON to course files
+      const now = new Date().toISOString();
       const publishData = {
         setup: s.setup,
         items: s.items,
@@ -975,9 +965,12 @@ export default function ClassPlannerApp() {
         unscheduled: s.unscheduled,
         holidays: s.holidays || {},
         modules: s.modules || {},
-        publishedAt: new Date().toISOString(),
+        publishedAt: now,
       };
       await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
+
+      // Update loadedAt so subsequent publishes don't false-alarm
+      updateState((st) => { st.loadedAt = now; return st; }, true);
 
       // Publish schedule as a Canvas Page (updates existing page if found)
       const html = renderScheduleHtml(s);
@@ -1173,6 +1166,7 @@ export default function ClassPlannerApp() {
       if (added) parts.push(`${added} new`);
       if (updated) parts.push(`${updated} updated`);
       if (autoAdded) parts.push(`+${autoAdded} dates`);
+      s.loadedAt = new Date().toISOString();
       showToast(parts.length ? `Refreshed: ${parts.join(', ')}` : 'No changes');
       return s;
     });
@@ -1406,7 +1400,11 @@ export default function ClassPlannerApp() {
             style={{ maxWidth: 1152, margin: '0 auto' }}>
         <section style={{ minWidth: 0 }}>
           {allDays.length === 0 ? (
-            <EmptyState onSetup={() => setShowSetup(true)} />
+            <EmptyState
+              onSetup={() => setShowSetup(true)}
+              onConnect={() => setShowCanvas(true)}
+              isConnected={state.canvas.connected}
+            />
           ) : (
             <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 6, overflow: 'hidden' }}>
               <div className="day-row" style={{ background: T.subtle, borderBottom: `1px solid ${T.border}` }}>
@@ -2154,8 +2152,15 @@ function SetupPanel({ state, updateState, onClose }) {
 function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse, onClose }) {
   const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
   const [token, setToken] = useState(state.canvas.token || '');
+  const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
+  const handleProxyChange = (val) => {
+    setProxyUrl(val);
+    const trimmed = val.trim().replace(/\/+$/, '');
+    try { localStorage.setItem('planner-cors-proxy', trimmed); } catch {}
+    CORS_PROXY = trimmed || getCorsProxy();
+  };
   const doConnect = async () => {
     setBusy(true);
     setStatus(null);
@@ -2187,6 +2192,10 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse,
           <Field label="Personal Access Token">
             <input type="password" placeholder="paste token…"
               value={token} onChange={(e) => setToken(e.target.value)} style={inputStyle} />
+          </Field>
+          <Field label="CORS proxy URL (optional)">
+            <input placeholder={CORS_PROXY_DEFAULT}
+              value={proxyUrl} onChange={(e) => handleProxyChange(e.target.value)} style={inputStyle} />
           </Field>
         </div>
         <div className="mt-3 flex items-center gap-3 flex-wrap">
@@ -2231,7 +2240,7 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse,
             <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
             <span>
               If connecting fails, your browser may be blocking cross-origin requests (CORS).
-              Try a CORS-unblock extension or deploy a small CORS proxy.
+              The app routes requests through a CORS proxy. You can use the default or enter your own proxy URL above.
             </span>
           </div>
         )}
@@ -2380,7 +2389,7 @@ function ShiftModal({ onShift, onClose }) {
     </div>
   );
 }
-function EmptyState({ onSetup }) {
+function EmptyState({ onSetup, onConnect, isConnected }) {
   return (
     <div style={{
       background: T.paper, border: `1px dashed ${T.borderStrong}`, borderRadius: 4,
@@ -2388,12 +2397,19 @@ function EmptyState({ onSetup }) {
     }}>
       <Calendar size={28} color={T.muted} style={{ margin: '0 auto 12px' }} />
       <div style={{ fontFamily: FONT_DISPLAY, fontSize: '20px', color: T.ink, marginBottom: 6 }}>
-        Set semester dates to begin
+        Get started
       </div>
-      <div style={{ fontSize: '13px', color: T.muted, marginBottom: 18 }}>
-        Pick your start and end dates and which weekdays you teach.
+      <div style={{ fontSize: '13px', color: T.muted, marginBottom: 18, maxWidth: 420, margin: '0 auto 18px' }}>
+        {isConnected
+          ? 'Pick a course from the Canvas panel, then set your semester dates.'
+          : 'Connect to Canvas to import your courses and assignments, then set your semester dates.'}
       </div>
-      <ActionButton onClick={onSetup} primary><Settings size={14} /> Open setup</ActionButton>
+      <div className="flex gap-3 justify-center flex-wrap">
+        {!isConnected && (
+          <ActionButton onClick={onConnect} primary><Cloud size={14} /> Connect Canvas</ActionButton>
+        )}
+        <ActionButton onClick={onSetup} primary={isConnected}><Settings size={14} /> Course setup</ActionButton>
+      </div>
     </div>
   );
 }
