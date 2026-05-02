@@ -688,9 +688,6 @@ export default function ClassPlannerApp() {
           </div>`;
         } else if (item.type === 'rich') {
           content += `<div style="margin: 0 0 8px 0; background: ${T.paper}; border: 1px solid ${T.border}; border-left: 3px solid ${T.sienna}; border-radius: 3px; padding: 10px 12px;">
-            <div style="margin-bottom: 4px;">
-              <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${T.sienna}; background: ${T.siennaSoft}; padding: 2px 6px; border-radius: 2px;">Note</span>
-            </div>
             <div style="font-size: 13px; color: ${T.ink}; line-height: 1.5;">${item.html || ''}</div>
           </div>`;
         }
