@@ -4,21 +4,40 @@ import {
   Trash2, AlertCircle, Check, BookOpen, Pencil, Bold, Italic,
   Link as LinkIcon, ExternalLink, Calendar, Info, Cloud, CloudOff,
   ListPlus, CalendarPlus, MinusCircle, Hourglass, Upload,
-  Copy, Undo2, ChevronRight, ChevronLeft, Printer, CalendarDays, Ban
+  Copy, Undo2, ChevronRight, ChevronLeft, ChevronUp, ChevronDown,
+  Printer, CalendarDays, Ban, Sun, Moon
 } from 'lucide-react';
 
 // ============================================================
 // THEME
 // ============================================================
-const T = {
+const LIGHT = {
   cream: '#F7F3EA', paper: '#FFFFFF', subtle: '#EFE9DB',
-  ink: '#1A1410', inkMid: '#3D362E', muted: '#756B5C', faint: '#B5AC9A',
+  ink: '#1A1410', inkMid: '#3D362E', muted: '#5C5347', faint: '#8A7F71',
   border: '#C7BFA8', borderStrong: '#A89F8E',
   inkBlue: '#1F3A60', inkBlueSoft: '#E8EDF4',
   sienna: '#A04A2A', siennaSoft: '#F5E9DF',
   forest: '#2F6B3A', ox: '#8B2E1F',
   amber: '#B47A1F', amberSoft: '#F6ECDA',
+  weekShade: T.weekShade, holidayBg: T.holidayBg,
+  focusRing: '#1F3A60',
+  successBg: '#e8f5e9', successBorder: '#a5d6a7',
+  errorBg: '#fbe9e7', errorBorder: '#ef9a9a',
 };
+const DARK = {
+  cream: '#1A1A1E', paper: '#242428', subtle: '#2A2A2F',
+  ink: '#E8E4DC', inkMid: '#C8C2B8', muted: '#9A9488', faint: '#6E6860',
+  border: '#3E3C38', borderStrong: '#555248',
+  inkBlue: '#6BA3D6', inkBlueSoft: '#1E2A3A',
+  sienna: '#D4724A', siennaSoft: '#2E2018',
+  forest: '#5CB86A', ox: '#E05A45',
+  amber: '#D4A03A', amberSoft: '#2E2610',
+  weekShade: '#2E2C28', holidayBg: '#2A2826',
+  focusRing: '#6BA3D6',
+  successBg: '#1a2e1a', successBorder: '#3a5a3a',
+  errorBg: '#2e1a1a', errorBorder: '#5a3a3a',
+};
+let T = LIGHT;
 const FONT_DISPLAY = "'Fraunces', 'Iowan Old Style', Georgia, serif";
 const FONT_BODY = "'Geist', -apple-system, system-ui, sans-serif";
 const FONT_MONO = "'JetBrains Mono', ui-monospace, monospace";
@@ -422,8 +441,17 @@ export default function ClassPlannerApp() {
   const [studentEmbed, setStudentEmbed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [showShiftModal, setShowShiftModal] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    try { const v = localStorage.getItem('planner-dark-mode'); return v ? v === 'true' : window.matchMedia('(prefers-color-scheme: dark)').matches; } catch { return false; }
+  });
   const stateRef = useRef(null);
   const hashStudent = window.location.hash === '#student';
+
+  // Apply theme
+  T = darkMode ? DARK : LIGHT;
+  useEffect(() => {
+    try { localStorage.setItem('planner-dark-mode', darkMode); } catch {}
+  }, [darkMode]);
 
   useEffect(() => {
     (async () => {
@@ -638,6 +666,17 @@ export default function ClassPlannerApp() {
     updateState((s) => {
       s.extraDays = s.extraDays.filter((d) => d !== date);
       delete s.schedule[date];
+      return s;
+    });
+  };
+
+  // ------ Reorder items within a day ------
+  const reorderOnDay = (date, fromIdx, toIdx) => {
+    updateState((s) => {
+      const arr = s.schedule[date];
+      if (!arr || fromIdx < 0 || toIdx < 0 || fromIdx >= arr.length || toIdx >= arr.length) return s;
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
       return s;
     });
   };
@@ -859,7 +898,7 @@ export default function ClassPlannerApp() {
       const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
       const shadedWeek = weekNumber(d) % 2 === 1;
       const holidayLabel = s.holidays?.[d];
-      const bgColor = holidayLabel ? '#f0ece4' : (isExtra ? T.amberSoft : (shadedWeek ? '#F2EBDA' : T.paper));
+      const bgColor = holidayLabel ? T.holidayBg : (isExtra ? T.amberSoft : (shadedWeek ? T.weekShade : T.paper));
 
       // Module header
       const moduleTitle = s.modules?.[d];
@@ -1187,7 +1226,7 @@ export default function ClassPlannerApp() {
         .holiday-row::after {
           content: '';
           position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-          background: repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(0,0,0,0.03) 8px, rgba(0,0,0,0.03) 16px);
+          background: repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(128,128,128,0.06) 8px, rgba(128,128,128,0.06) 16px);
           pointer-events: none;
         }
 
@@ -1204,10 +1243,44 @@ export default function ClassPlannerApp() {
           justify-content: space-between;
         }
 
+        /* Focus indicators for accessibility */
+        button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
+          outline: 2px solid ${T.focusRing};
+          outline-offset: 2px;
+          border-radius: 2px;
+        }
+
+        /* Skip navigation link */
+        .skip-link {
+          position: absolute; top: -40px; left: 0;
+          background: ${T.inkBlue}; color: #fff;
+          padding: 8px 16px; z-index: 100;
+          font-family: ${FONT_BODY}; font-size: 14px;
+          text-decoration: none; border-radius: 0 0 4px 0;
+        }
+        .skip-link:focus { top: 0; }
+
+        /* Keyboard move buttons */
+        .kb-move-btn {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 24px; height: 24px; padding: 0;
+          background: ${T.paper}; border: 1px solid ${T.border};
+          border-radius: 2px; cursor: pointer; color: ${T.muted};
+        }
+        .kb-move-btn:hover { background: ${T.subtle}; }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            transition-duration: 0.01ms !important;
+            animation-duration: 0.01ms !important;
+          }
+        }
+
         @media print {
-          body { background: white !important; }
+          body { background: white !important; color: #000 !important; }
           header, footer, aside, .day-tools, .planner-header-row button,
-          .planner-header-row .flex, [title="Drag to move"] { display: none !important; }
+          .planner-header-row .flex, [title="Drag to move"],
+          .kb-move-btn, .skip-link { display: none !important; }
           .planner-shell { padding: 0 !important; }
           .planner-main { display: block !important; }
           .day-row { break-inside: avoid; }
@@ -1217,59 +1290,76 @@ export default function ClassPlannerApp() {
         }
       `}</style>
 
+      {/* SKIP NAV */}
+      <a href="#schedule-content" className="skip-link">Skip to schedule</a>
+
       {/* HEADER */}
-      <header style={{ borderBottom: `1px solid ${T.border}`, background: T.paper }}>
+      <header role="banner" style={{ borderBottom: `1px solid ${T.border}`, background: T.paper }}>
         <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
           <div className="planner-header-row">
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.18em', color: T.muted, textTransform: 'uppercase' }}>
-                Course schedule · {allDays.length} meetings
-                {state.setup.startDate && state.setup.endDate && (
-                  <> · {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)} · {state.setup.classDays.map((c) => DAY_SHORT[c]).join(' · ')}</>
-                )}
+              <h1 className="planner-title" style={{ fontSize: '18px', margin: 0 }}>
+                {state.setup.courseTitle || 'Course Schedule'}
+              </h1>
+              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.18em', color: T.muted, textTransform: 'uppercase', marginTop: 4 }}>
+                {allDays.length} meetings
               </div>
+              {state.setup.startDate && state.setup.endDate && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
+                  {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)}
+                </div>
+              )}
+              {state.setup.classDays?.length > 0 && (
+                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
+                  {state.setup.classDays.map((c) => DAY_FULL[c]).join(', ')}
+                </div>
+              )}
               {!isStudent && (
-                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 2 }}>
+                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
                   Build {new Date(__BUILD_TIME__).toLocaleString()}
                   {state.lastSaved && <> · Saved {new Date(state.lastSaved).toLocaleString()}</>}
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <nav aria-label="Schedule tools" className="flex items-center gap-2 flex-wrap">
               {!hashStudent && (
-                <ToggleButton active={isStudent} onClick={() => updateState((s) => { s.studentView = !s.studentView; return s; })}>
+                <ToggleButton active={isStudent} onClick={() => updateState((s) => { s.studentView = !s.studentView; return s; })}
+                  aria-label={isStudent ? 'Switch to editor view' : 'Switch to student view'}>
                   {isStudent ? <Eye size={14} /> : <EyeOff size={14} />}
                   {isStudent ? 'Student' : 'Editor'}
                 </ToggleButton>
               )}
-              <IconButton onClick={exportICal} title="Download iCal file">
+              <IconButton onClick={() => setDarkMode((d) => !d)} aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
+                {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+              </IconButton>
+              <IconButton onClick={exportICal} aria-label="Download iCal calendar file">
                 <CalendarDays size={16} />
               </IconButton>
-              <IconButton onClick={() => window.print()} title="Print schedule">
+              <IconButton onClick={() => window.print()} aria-label="Print schedule">
                 <Printer size={16} />
               </IconButton>
               {!isStudent && (
                 <>
-                  <IconButton onClick={undo} title="Undo (Ctrl+Z)" disabled={undoStack.length === 0}>
+                  <IconButton onClick={undo} aria-label="Undo last action" disabled={undoStack.length === 0}>
                     <Undo2 size={16} color={undoStack.length === 0 ? T.faint : T.ink} />
                   </IconButton>
-                  <IconButton onClick={() => setShowShiftModal(true)} title="Shift all dates">
+                  <IconButton onClick={() => setShowShiftModal(true)} aria-label="Shift all dates forward or backward">
                     <ChevronRight size={16} />
                   </IconButton>
                   {state.canvas.connected && state.canvas.courseId && (
-                    <IconButton onClick={publishToCanvas} title="Publish schedule to Canvas course files">
+                    <IconButton onClick={publishToCanvas} aria-label="Publish schedule to Canvas">
                       <Upload size={16} />
                     </IconButton>
                   )}
-                  <IconButton onClick={() => setShowCanvas((v) => !v)} title="Canvas connection">
+                  <IconButton onClick={() => setShowCanvas((v) => !v)} aria-label="Canvas connection settings">
                     {state.canvas.connected ? <Cloud size={16} color={T.forest} /> : <CloudOff size={16} color={T.muted} />}
                   </IconButton>
-                  <IconButton onClick={() => setShowSetup((v) => !v)} title="Course setup">
+                  <IconButton onClick={() => setShowSetup((v) => !v)} aria-label="Course setup">
                     <Settings size={16} />
                   </IconButton>
                 </>
               )}
-            </div>
+            </nav>
           </div>
         </div>
       </header>
@@ -1285,7 +1375,7 @@ export default function ClassPlannerApp() {
               <span style={{ fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 600, color: T.ink }}>
                 Published to Canvas
               </span>
-              <IconButton onClick={() => setStudentEmbed(null)}><X size={14} /></IconButton>
+              <IconButton onClick={() => setStudentEmbed(null)} aria-label="Dismiss publish notification"><X size={14} /></IconButton>
             </div>
             <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 8 }}>
               Schedule published as a Canvas Page. Students can view it directly. Re-publish after changes.
@@ -1310,7 +1400,8 @@ export default function ClassPlannerApp() {
       )}
 
       {/* MAIN */}
-      <main className={`planner-shell planner-main ${!isStudent ? 'with-sidebar' : ''}`}
+      <main id="schedule-content" role="main" aria-label="Course schedule"
+            className={`planner-shell planner-main ${!isStudent ? 'with-sidebar' : ''}`}
             style={{ maxWidth: 1152, margin: '0 auto' }}>
         <section style={{ minWidth: 0 }}>
           {allDays.length === 0 ? (
@@ -1363,6 +1454,7 @@ export default function ClassPlannerApp() {
                       onRemoveExtraDay={() => removeExtraDay(d)}
                       onToggleHoliday={() => toggleHoliday(d)}
                       onAddModule={() => addModuleHeader(d)}
+                      onReorder={(from, to) => reorderOnDay(d, from, to)}
                       addableDates={getAddableDatesAfter(d, allDaysSet, state.setup.endDate)}
                       draggingId={draggingId}
                       setDraggingId={setDraggingId}
@@ -1397,17 +1489,20 @@ export default function ClassPlannerApp() {
         )}
       </main>
 
-      {toast && (
-        <div style={{
+      <div role="status" aria-live="polite" aria-atomic="true"
+        style={{
           position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',
-          background: toast.kind === 'err' ? T.ox : T.ink, color: '#fff',
-          padding: '10px 18px', borderRadius: 4, fontSize: '13px',
-          fontFamily: FONT_BODY, boxShadow: '0 6px 24px rgba(26,20,16,0.18)', zIndex: 50,
+          background: toast ? (toast.kind === 'err' ? T.ox : T.ink) : 'transparent',
+          color: '#fff',
+          padding: toast ? '10px 18px' : 0, borderRadius: 4, fontSize: '13px',
+          fontFamily: FONT_BODY, boxShadow: toast ? '0 6px 24px rgba(26,20,16,0.18)' : 'none', zIndex: 50,
           maxWidth: 'calc(100vw - 32px)', textAlign: 'center',
+          pointerEvents: toast ? 'auto' : 'none',
+          opacity: toast ? 1 : 0,
+          transition: 'opacity 200ms',
         }}>
-          {toast.msg}
-        </div>
-      )}
+        {toast?.msg || ''}
+      </div>
 
       <footer style={{ maxWidth: 1152, margin: '0 auto', padding: '24px 16px', textAlign: 'center', color: T.faint, fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.1em' }}>
         Saved locally · {Object.keys(state.items).length} items · {state.extraDays.length} added dates
@@ -1425,7 +1520,7 @@ function ClassDayRow({
   weekIdx, isWeekStart, holidayLabel,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
-  onToggleHoliday, onAddModule,
+  onToggleHoliday, onAddModule, onReorder,
   addableDates, draggingId, setDraggingId,
   autoEditId, clearAutoEdit,
 }) {
@@ -1435,7 +1530,7 @@ function ClassDayRow({
   const d = new Date(date + 'T00:00:00');
   // alternate background by *week* (not row) so a whole week reads as one band
   const weekShade = (weekIdx ?? 0) % 2 === 1;
-  const rowBg = isExtra ? T.amberSoft : (weekShade ? '#F2EBDA' : T.paper);
+  const rowBg = isExtra ? T.amberSoft : (weekShade ? T.weekShade : T.paper);
   const dayLabel = DAY_FULL[DAY_CODES[d.getDay()]];
 
   return (
@@ -1443,7 +1538,7 @@ function ClassDayRow({
       borderBottom: `1px solid ${T.border}`,
       boxShadow: isWeekStart ? 'none' : (weekShade ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)'),
       borderTop: isWeekStart ? `2px solid ${T.borderStrong}` : 'none',
-      background: holidayLabel ? '#f0ece4' : rowBg,
+      background: holidayLabel ? T.holidayBg : rowBg,
       opacity: holidayLabel ? 0.7 : 1,
     }}>
       {/* DATE COLUMN */}
@@ -1462,7 +1557,7 @@ function ClassDayRow({
           <div style={{
             display: 'inline-block', marginTop: 6,
             fontFamily: FONT_MONO, fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase',
-            color: T.ox, background: '#fff', border: `1px solid ${T.ox}44`,
+            color: T.ox, background: T.paper, border: `1px solid ${T.ox}44`,
             padding: '1px 5px', borderRadius: 2,
           }}>{holidayLabel}</div>
         )}
@@ -1470,7 +1565,7 @@ function ClassDayRow({
           <div style={{
             display: 'inline-block', marginTop: 6,
             fontFamily: FONT_MONO, fontSize: '8px', letterSpacing: '0.18em', textTransform: 'uppercase',
-            color: T.amber, background: '#fff', border: `1px solid ${T.amber}66`,
+            color: T.amber, background: T.paper, border: `1px solid ${T.amber}66`,
             padding: '1px 5px', borderRadius: 2,
           }}>Added</div>
         )}
@@ -1568,6 +1663,8 @@ function ClassDayRow({
                 item={item} isStudent={isStudent} canvas={canvas}
                 onUpdate={onUpdateItem} onDelete={onDeleteItem}
                 onDuplicate={() => onDuplicate(item.id)}
+                onMoveUp={idx > 0 ? () => onReorder(idx, idx - 1) : null}
+                onMoveDown={idx < items.length - 1 ? () => onReorder(idx, idx + 1) : null}
                 draggingId={draggingId} setDraggingId={setDraggingId}
                 autoEdit={autoEditId === item.id}
                 onAutoEditConsumed={clearAutoEdit}
@@ -1704,7 +1801,7 @@ function UnscheduledZone({ items, canvas, onMoveItem, onUpdateItem, onDeleteItem
 // ============================================================
 // ITEM CARD
 // ============================================================
-function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
+function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, onMoveUp, onMoveDown, draggingId, setDraggingId, autoEdit, onAutoEditConsumed }) {
   const isAssign = item.type === 'assign';
   const isRich = item.type === 'rich';
   const [editing, setEditing] = useState(false);
@@ -1750,8 +1847,20 @@ function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, dr
       }}
     >
       {!isStudent && (
-        <div style={{ color: T.faint, paddingTop: 2, flexShrink: 0 }} title="Drag to move">
-          <GripVertical size={14} />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, flexShrink: 0, paddingTop: 2 }}>
+          {onMoveUp && (
+            <button className="kb-move-btn" onClick={onMoveUp} aria-label="Move item up">
+              <ChevronUp size={12} />
+            </button>
+          )}
+          <div style={{ color: T.faint }} aria-hidden="true">
+            <GripVertical size={14} />
+          </div>
+          {onMoveDown && (
+            <button className="kb-move-btn" onClick={onMoveDown} aria-label="Move item down">
+              <ChevronDown size={12} />
+            </button>
+          )}
         </div>
       )}
 
@@ -1770,7 +1879,8 @@ function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, dr
                 </span>
               ) : null}
               {item.htmlUrl && (
-                <a href={item.htmlUrl} target="_blank" rel="noreferrer" style={{ color: T.muted }} title="Open in Canvas">
+                <a href={item.htmlUrl} target="_blank" rel="noreferrer" style={{ color: T.muted }}
+                  aria-label={`Open ${item.title || 'assignment'} in Canvas`}>
                   <ExternalLink size={11} />
                 </a>
               )}
@@ -1816,7 +1926,7 @@ function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, dr
                 className="planner-rich"
                 onDoubleClick={() => !isStudent && setEditing(true)}
                 style={{ fontFamily: FONT_BODY, fontSize: '14px', color: T.inkMid, lineHeight: 1.5, cursor: !isStudent ? 'text' : 'default', wordBreak: 'break-word' }}
-                dangerouslySetInnerHTML={{ __html: item.html || '<p style="color:#B5AC9A;font-style:italic">Empty note — click pencil to edit</p>' }}
+                dangerouslySetInnerHTML={{ __html: item.html || `<p style="color:${T.muted};font-style:italic">Empty note — click pencil to edit</p>` }}
               />
             )}
           </>
@@ -1826,21 +1936,21 @@ function ItemCard({ item, isStudent, canvas, onUpdate, onDelete, onDuplicate, dr
       {!isStudent && !editing && !titleEditing && (
         <div className="flex flex-col gap-1" style={{ opacity: 0.6, flexShrink: 0 }}>
           {isRich && (
-            <button onClick={() => setEditing(true)} title="Edit" style={iconBtnStyle}>
+            <button onClick={() => setEditing(true)} aria-label="Edit note" style={iconBtnStyle}>
               <Pencil size={13} />
             </button>
           )}
           {isAssign && (
-            <button onClick={() => setTitleEditing(true)} title="Rename" style={iconBtnStyle}>
+            <button onClick={() => setTitleEditing(true)} aria-label={`Rename ${item.title || 'assignment'}`} style={iconBtnStyle}>
               <Pencil size={13} />
             </button>
           )}
           {onDuplicate && (
-            <button onClick={onDuplicate} title="Duplicate" style={iconBtnStyle}>
+            <button onClick={onDuplicate} aria-label="Duplicate item" style={iconBtnStyle}>
               <Copy size={13} />
             </button>
           )}
-          <button onClick={() => onDelete(item.id)} title="Delete" style={iconBtnStyle}>
+          <button onClick={() => onDelete(item.id)} aria-label={`Delete ${item.title || 'item'}`} style={iconBtnStyle}>
             <Trash2 size={13} />
           </button>
         </div>
@@ -1997,8 +2107,8 @@ function SetupPanel({ state, updateState, onClose }) {
     <div style={{ background: T.paper, borderBottom: `1px solid ${T.border}` }}>
       <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
         <div className="flex items-center justify-between mb-4">
-          <h2 style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Course setup</h2>
-          <IconButton onClick={onClose}><X size={16} /></IconButton>
+          <h2 id="setup-heading" style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Course setup</h2>
+          <IconButton onClick={onClose} aria-label="Close setup panel"><X size={16} /></IconButton>
         </div>
         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
           <Field label="Course title">
@@ -2060,8 +2170,8 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse,
     <div style={{ background: T.paper, borderBottom: `1px solid ${T.border}` }}>
       <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
         <div className="flex items-center justify-between mb-3">
-          <h2 style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Canvas connection</h2>
-          <IconButton onClick={onClose}><X size={16} /></IconButton>
+          <h2 id="canvas-heading" style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Canvas connection</h2>
+          <IconButton onClick={onClose} aria-label="Close Canvas panel"><X size={16} /></IconButton>
         </div>
         <p style={{ color: T.muted, fontSize: '13px', marginBottom: 16, maxWidth: 760 }}>
           Generate a Personal Access Token in Canvas (Account → Settings → "+ New Access Token").
@@ -2107,8 +2217,8 @@ function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse,
         {status && (
           <div style={{
             marginTop: 14, padding: 10, borderRadius: 3, fontSize: '12px', display: 'flex', gap: 8,
-            background: status.kind === 'ok' ? '#e8f5e9' : '#fbe9e7',
-            border: `1px solid ${status.kind === 'ok' ? '#a5d6a7' : '#ef9a9a'}`,
+            background: status.kind === 'ok' ? T.successBg : T.errorBg,
+            border: `1px solid ${status.kind === 'ok' ? T.successBorder : T.errorBorder}`,
             color: status.kind === 'ok' ? T.forest : T.ox,
           }}>
             {status.kind === 'ok' ? <Check size={14} style={{ flexShrink: 0, marginTop: 2 }} /> : <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />}
@@ -2153,17 +2263,24 @@ function Field({ label, children }) {
     </label>
   );
 }
-function IconButton({ children, onClick, title }) {
+function IconButton({ children, onClick, title, disabled, ...rest }) {
   return (
-    <button onClick={onClick} title={title}
-      style={{ padding: 8, border: `1px solid ${T.border}`, borderRadius: 3, background: T.paper, color: T.ink, cursor: 'pointer' }}>
+    <button onClick={onClick} title={title} disabled={disabled}
+      aria-label={rest['aria-label'] || title}
+      style={{
+        padding: 8, border: `1px solid ${T.border}`, borderRadius: 3,
+        background: T.paper, color: disabled ? T.faint : T.ink,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
+        minWidth: 36, minHeight: 36,
+      }}>
       {children}
     </button>
   );
 }
-function ToggleButton({ active, children, onClick }) {
+function ToggleButton({ active, children, onClick, ...rest }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} aria-label={rest['aria-label']} aria-pressed={active}
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '7px 12px', borderRadius: 3,
@@ -2207,15 +2324,16 @@ function ToolbarBtn({ children, onClick }) {
 }
 function DayToolBtn({ children, onClick, title, disabled }) {
   return (
-    <button onClick={onClick} title={title} disabled={disabled}
+    <button onClick={onClick} title={title} aria-label={title} disabled={disabled}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4,
-        padding: '4px 8px', border: `1px solid ${T.border}`, background: T.paper,
+        padding: '6px 10px', border: `1px solid ${T.border}`, background: T.paper,
         color: disabled ? T.faint : T.muted, borderRadius: 2,
         fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.06em',
         textTransform: 'uppercase',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.6 : 1,
+        minHeight: 32,
       }}>
       {children}
     </button>
