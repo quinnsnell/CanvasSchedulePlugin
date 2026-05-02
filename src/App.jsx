@@ -19,7 +19,7 @@ const LIGHT = {
   sienna: '#A04A2A', siennaSoft: '#F5E9DF',
   forest: '#2F6B3A', ox: '#8B2E1F',
   amber: '#B47A1F', amberSoft: '#F6ECDA',
-  weekShade: T.weekShade, holidayBg: T.holidayBg,
+  weekShade: '#F2EBDA', holidayBg: '#f0ece4',
   focusRing: '#1F3A60',
   successBg: '#e8f5e9', successBorder: '#a5d6a7',
   errorBg: '#fbe9e7', errorBorder: '#ef9a9a',
