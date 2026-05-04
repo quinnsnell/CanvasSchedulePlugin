@@ -19,7 +19,7 @@ import {
   Cloud, CloudOff, Upload, Calendar,
   Undo2, ChevronRight, Printer, CalendarDays, Sun, Moon,
 } from 'lucide-react';
-import { T, setTheme, FONT_DISPLAY, FONT_BODY, FONT_MONO } from './theme.js';
+import { T, LIGHT, DARK, setTheme, FONT_DISPLAY, FONT_BODY, FONT_MONO } from './theme.js';
 import {
   DAY_CODES, DAY_FULL, PENDING_TTL_MS, uid,
   generateClassDays, computeAllDays, getAddableDatesAfter,
@@ -1127,8 +1127,39 @@ function ScheduleTable({
 }
 
 // ── Schedule HTML renderer (for Canvas Page publish) ───────────
+// Uses CSS custom properties with a prefers-color-scheme media query
+// so the published page adapts to the student's light/dark preference.
 
 function renderScheduleHtml(s) {
+  const L = LIGHT;
+  const D = DARK;
+
+  // CSS custom properties for both themes
+  const cssVars = `
+    <style>
+      .schedule-wrap {
+        --s-paper: ${L.paper}; --s-subtle: ${L.subtle}; --s-cream: ${L.cream};
+        --s-ink: ${L.ink}; --s-ink-mid: ${L.inkMid}; --s-muted: ${L.muted};
+        --s-border: ${L.border}; --s-border-strong: ${L.borderStrong};
+        --s-ink-blue: ${L.inkBlue}; --s-ink-blue-soft: ${L.inkBlueSoft};
+        --s-sienna: ${L.sienna}; --s-ox: ${L.ox};
+        --s-amber-soft: ${L.amberSoft};
+        --s-week-shade: ${L.weekShade}; --s-holiday-bg: ${L.holidayBg};
+      }
+      @media (prefers-color-scheme: dark) {
+        .schedule-wrap {
+          --s-paper: ${D.paper}; --s-subtle: ${D.subtle}; --s-cream: ${D.cream};
+          --s-ink: ${D.ink}; --s-ink-mid: ${D.inkMid}; --s-muted: ${D.muted};
+          --s-border: ${D.border}; --s-border-strong: ${D.borderStrong};
+          --s-ink-blue: ${D.inkBlue}; --s-ink-blue-soft: ${D.inkBlueSoft};
+          --s-sienna: ${D.sienna}; --s-ox: ${D.ox};
+          --s-amber-soft: ${D.amberSoft};
+          --s-week-shade: ${D.weekShade}; --s-holiday-bg: ${D.holidayBg};
+        }
+      }
+      .schedule-wrap a { color: var(--s-ink-blue); }
+    </style>`;
+
   const days = computeAllDays(s.setup, s.extraDays);
   const teaching = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
   let prevWk = null;
@@ -1145,60 +1176,63 @@ function renderScheduleHtml(s) {
     const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
     const shadedWeek = weekNumber(d) % 2 === 1;
     const holidayLabel = s.holidays?.[d];
-    const bgColor = holidayLabel ? T.holidayBg : (isExtra ? T.amberSoft : (shadedWeek ? T.weekShade : T.paper));
+    const bgColor = holidayLabel
+      ? 'var(--s-holiday-bg)'
+      : (isExtra ? 'var(--s-amber-soft)' : (shadedWeek ? 'var(--s-week-shade)' : 'var(--s-paper)'));
 
     // Module header row
     const moduleTitle = s.modules?.[d];
     if (moduleTitle) {
-      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${T.ink}; background: ${T.subtle}; border-bottom: 1px solid ${T.border};">${moduleTitle}</td></tr>`;
+      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: var(--s-ink); background: var(--s-subtle); border-bottom: 1px solid var(--s-border);">${moduleTitle}</td></tr>`;
     }
 
     if (isNewWeek) {
-      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${T.borderStrong};"></div></td></tr>`;
+      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid var(--s-border-strong);"></div></td></tr>`;
     }
 
     let content = '';
     items.forEach((item) => {
       if (item.type === 'assign') {
         const titleHtml = item.htmlUrl
-          ? `<a href="${item.htmlUrl}" style="color: ${T.inkBlue}; text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
+          ? `<a href="${item.htmlUrl}" style="color: var(--s-ink-blue); text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
           : (item.title || 'Untitled');
-        content += `<div style="margin: 0 0 8px 0; background: ${T.paper}; border: 1px solid ${T.border}; border-left: 3px solid ${T.inkBlue}; border-radius: 3px; padding: 10px 12px;">
+        content += `<div style="margin: 0 0 8px 0; background: var(--s-paper); border: 1px solid var(--s-border); border-left: 3px solid var(--s-ink-blue); border-radius: 3px; padding: 10px 12px;">
           <div style="margin-bottom: 4px;">
-            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${T.inkBlue}; background: ${T.inkBlueSoft}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
-            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: ${T.muted}; margin-left: 6px;">${item.points} pts</span>` : ''}
+            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--s-ink-blue); background: var(--s-ink-blue-soft); padding: 2px 6px; border-radius: 2px;">Assignment</span>
+            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: var(--s-muted); margin-left: 6px;">${item.points} pts</span>` : ''}
           </div>
-          <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${T.ink}; line-height: 1.3;">${titleHtml}</div>
+          <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: var(--s-ink); line-height: 1.3;">${titleHtml}</div>
         </div>`;
       } else if (item.type === 'rich') {
-        content += `<div style="margin: 0 0 8px 0; background: ${T.paper}; border: 1px solid ${T.border}; border-left: 3px solid ${T.sienna}; border-radius: 3px; padding: 10px 12px;">
-          <div style="font-size: 13px; color: ${T.ink}; line-height: 1.5;">${item.html || ''}</div>
+        content += `<div style="margin: 0 0 8px 0; background: var(--s-paper); border: 1px solid var(--s-border); border-left: 3px solid var(--s-sienna); border-radius: 3px; padding: 10px 12px;">
+          <div style="font-size: 13px; color: var(--s-ink); line-height: 1.5;">${item.html || ''}</div>
         </div>`;
       }
     });
 
     if (holidayLabel) {
-      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: ${T.ox}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
+      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: var(--s-ox); text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
     } else if (!content) {
       content = `<div style="padding: 4px 0;">&nbsp;</div>`;
     }
 
     const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
     const rowOpacity = holidayLabel ? 'opacity: 0.7;' : '';
-    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${T.border}; box-shadow: ${rowShadow}; ${rowOpacity}">
-      <td style="padding: 14px 16px; border-right: 1px solid ${T.border}; vertical-align: top; width: 170px;">
-        <div style="font-family: Georgia, serif; font-weight: 500; color: ${T.ink}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
-        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px;">${dayName}</div>
+    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid var(--s-border); box-shadow: ${rowShadow}; ${rowOpacity}">
+      <td style="padding: 14px 16px; border-right: 1px solid var(--s-border); vertical-align: top; width: 170px;">
+        <div style="font-family: Georgia, serif; font-weight: 500; color: var(--s-ink); font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
+        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--s-muted); margin-top: 2px;">${dayName}</div>
       </td>
       <td style="padding: 14px 16px; vertical-align: top;">${content}</td>
     </tr>`;
   });
 
-  return `<div style="max-width: 1152px; margin: 0 auto;">
-    <table style="width: 100%; border-collapse: collapse; border: 1px solid ${T.border}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif;">
-      <thead><tr style="background: ${T.subtle}; border-bottom: 1px solid ${T.border};">
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${T.muted}; border-right: 1px solid ${T.border};">Class meeting</th>
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${T.muted};">Readings · Assignments · Materials</th>
+  return `${cssVars}
+  <div class="schedule-wrap" style="max-width: 1152px; margin: 0 auto;">
+    <table style="width: 100%; border-collapse: collapse; border: 1px solid var(--s-border); border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: var(--s-ink);">
+      <thead><tr style="background: var(--s-subtle); border-bottom: 1px solid var(--s-border);">
+        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--s-muted); border-right: 1px solid var(--s-border);">Class meeting</th>
+        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--s-muted);">Readings · Assignments · Materials</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
