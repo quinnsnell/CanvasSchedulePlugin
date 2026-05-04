@@ -1127,28 +1127,24 @@ function ScheduleTable({
 }
 
 // ── Schedule HTML renderer (for Canvas Page publish) ───────────
-// Uses CSS custom properties with a prefers-color-scheme media query
-// so the published page adapts to the student's light/dark preference.
+// Uses CSS custom properties with light-theme fallbacks in every var() call.
+// The <style> block only defines dark-mode overrides via prefers-color-scheme.
+// If Canvas strips the <style> tag, the light theme still renders correctly
+// because every var(--x, fallback) falls back to the hardcoded light value.
 
 function renderScheduleHtml(s) {
   const L = LIGHT;
   const D = DARK;
 
-  // CSS custom properties for both themes
-  const cssVars = `
+  // Helper: var(--name, lightFallback) — works even if <style> is stripped
+  const v = (name, light) => `var(--s-${name}, ${light})`;
+
+  // Dark-mode-only style block (light values come from inline fallbacks)
+  const darkStyleBlock = `
     <style>
-      .schedule-wrap {
-        --s-paper: ${L.paper}; --s-subtle: ${L.subtle}; --s-cream: ${L.cream};
-        --s-ink: ${L.ink}; --s-ink-mid: ${L.inkMid}; --s-muted: ${L.muted};
-        --s-border: ${L.border}; --s-border-strong: ${L.borderStrong};
-        --s-ink-blue: ${L.inkBlue}; --s-ink-blue-soft: ${L.inkBlueSoft};
-        --s-sienna: ${L.sienna}; --s-ox: ${L.ox};
-        --s-amber-soft: ${L.amberSoft};
-        --s-week-shade: ${L.weekShade}; --s-holiday-bg: ${L.holidayBg};
-      }
       @media (prefers-color-scheme: dark) {
         .schedule-wrap {
-          --s-paper: ${D.paper}; --s-subtle: ${D.subtle}; --s-cream: ${D.cream};
+          --s-paper: ${D.paper}; --s-subtle: ${D.subtle};
           --s-ink: ${D.ink}; --s-ink-mid: ${D.inkMid}; --s-muted: ${D.muted};
           --s-border: ${D.border}; --s-border-strong: ${D.borderStrong};
           --s-ink-blue: ${D.inkBlue}; --s-ink-blue-soft: ${D.inkBlueSoft};
@@ -1156,8 +1152,8 @@ function renderScheduleHtml(s) {
           --s-amber-soft: ${D.amberSoft};
           --s-week-shade: ${D.weekShade}; --s-holiday-bg: ${D.holidayBg};
         }
+        .schedule-wrap a { color: ${D.inkBlue}; }
       }
-      .schedule-wrap a { color: var(--s-ink-blue); }
     </style>`;
 
   const days = computeAllDays(s.setup, s.extraDays);
@@ -1176,63 +1172,67 @@ function renderScheduleHtml(s) {
     const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
     const shadedWeek = weekNumber(d) % 2 === 1;
     const holidayLabel = s.holidays?.[d];
-    const bgColor = holidayLabel
-      ? 'var(--s-holiday-bg)'
-      : (isExtra ? 'var(--s-amber-soft)' : (shadedWeek ? 'var(--s-week-shade)' : 'var(--s-paper)'));
+
+    // Background: use var() with light fallback for each case
+    let bgColor;
+    if (holidayLabel) bgColor = v('holiday-bg', L.holidayBg);
+    else if (isExtra) bgColor = v('amber-soft', L.amberSoft);
+    else if (shadedWeek) bgColor = v('week-shade', L.weekShade);
+    else bgColor = v('paper', L.paper);
 
     // Module header row
     const moduleTitle = s.modules?.[d];
     if (moduleTitle) {
-      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: var(--s-ink); background: var(--s-subtle); border-bottom: 1px solid var(--s-border);">${moduleTitle}</td></tr>`;
+      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${v('ink', L.ink)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">${moduleTitle}</td></tr>`;
     }
 
     if (isNewWeek) {
-      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid var(--s-border-strong);"></div></td></tr>`;
+      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${v('border-strong', L.borderStrong)};"></div></td></tr>`;
     }
 
     let content = '';
     items.forEach((item) => {
       if (item.type === 'assign') {
         const titleHtml = item.htmlUrl
-          ? `<a href="${item.htmlUrl}" style="color: var(--s-ink-blue); text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
+          ? `<a href="${item.htmlUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
           : (item.title || 'Untitled');
-        content += `<div style="margin: 0 0 8px 0; background: var(--s-paper); border: 1px solid var(--s-border); border-left: 3px solid var(--s-ink-blue); border-radius: 3px; padding: 10px 12px;">
+        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
           <div style="margin-bottom: 4px;">
-            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--s-ink-blue); background: var(--s-ink-blue-soft); padding: 2px 6px; border-radius: 2px;">Assignment</span>
-            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: var(--s-muted); margin-left: 6px;">${item.points} pts</span>` : ''}
+            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
+            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: ${v('muted', L.muted)}; margin-left: 6px;">${item.points} pts</span>` : ''}
           </div>
-          <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: var(--s-ink); line-height: 1.3;">${titleHtml}</div>
+          <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${v('ink', L.ink)}; line-height: 1.3;">${titleHtml}</div>
         </div>`;
       } else if (item.type === 'rich') {
-        content += `<div style="margin: 0 0 8px 0; background: var(--s-paper); border: 1px solid var(--s-border); border-left: 3px solid var(--s-sienna); border-radius: 3px; padding: 10px 12px;">
-          <div style="font-size: 13px; color: var(--s-ink); line-height: 1.5;">${item.html || ''}</div>
+        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('sienna', L.sienna)}; border-radius: 3px; padding: 10px 12px;">
+          <div style="font-size: 13px; color: ${v('ink', L.ink)}; line-height: 1.5;">${item.html || ''}</div>
         </div>`;
       }
     });
 
     if (holidayLabel) {
-      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: var(--s-ox); text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
+      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: ${v('ox', L.ox)}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
     } else if (!content) {
       content = `<div style="padding: 4px 0;">&nbsp;</div>`;
     }
 
     const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
     const rowOpacity = holidayLabel ? 'opacity: 0.7;' : '';
-    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid var(--s-border); box-shadow: ${rowShadow}; ${rowOpacity}">
-      <td style="padding: 14px 16px; border-right: 1px solid var(--s-border); vertical-align: top; width: 170px;">
-        <div style="font-family: Georgia, serif; font-weight: 500; color: var(--s-ink); font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
-        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--s-muted); margin-top: 2px;">${dayName}</div>
+    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${v('border', L.border)}; box-shadow: ${rowShadow}; ${rowOpacity}">
+      <td style="padding: 14px 16px; border-right: 1px solid ${v('border', L.border)}; vertical-align: top; width: 170px;">
+        <div style="font-family: Georgia, serif; font-weight: 500; color: ${v('ink', L.ink)}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
+        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('muted', L.muted)}; margin-top: 2px;">${dayName}</div>
       </td>
       <td style="padding: 14px 16px; vertical-align: top;">${content}</td>
     </tr>`;
   });
 
-  return `${cssVars}
+  return `${darkStyleBlock}
   <div class="schedule-wrap" style="max-width: 1152px; margin: 0 auto;">
-    <table style="width: 100%; border-collapse: collapse; border: 1px solid var(--s-border); border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: var(--s-ink);">
-      <thead><tr style="background: var(--s-subtle); border-bottom: 1px solid var(--s-border);">
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--s-muted); border-right: 1px solid var(--s-border);">Class meeting</th>
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--s-muted);">Readings · Assignments · Materials</th>
+    <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
+      <thead><tr style="background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">
+        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
+        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)};">Readings · Assignments · Materials</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
