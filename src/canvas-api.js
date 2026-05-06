@@ -72,26 +72,89 @@ async function canvasFetch(baseUrl, token, path, opts = {}) {
   return text ? JSON.parse(text) : {};
 }
 
+/**
+ * Parse a Link header (RFC 5988) and return the URL for the given rel, or null.
+ * Example header: `<https://…?page=2&per_page=100>; rel="next", <https://…>; rel="last"`
+ */
+function parseLinkHeader(header, rel) {
+  if (!header) return null;
+  const parts = header.split(',');
+  for (const part of parts) {
+    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match && match[2] === rel) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Fetch all pages of a paginated Canvas API endpoint.
+ * Follows `rel="next"` Link headers until exhausted, concatenating all
+ * result arrays into a single array. Designed for GET list endpoints.
+ */
+async function canvasFetchAll(baseUrl, token, path) {
+  const base = baseUrl.replace(/\/+$/, '');
+  const host = new URL(base).host;
+  let url = IS_DEV
+    ? `/api/v1${path}`
+    : `${CORS_PROXY}/${host}/api/v1${path}`;
+
+  const allResults = [];
+
+  while (url) {
+    const headers = { Authorization: `Bearer ${token}` };
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Canvas ${res.status}: ${text.slice(0, 180) || res.statusText}`);
+    }
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : [];
+    if (Array.isArray(data)) {
+      allResults.push(...data);
+    } else {
+      // Unexpected non-array response; return it directly for safety
+      return data;
+    }
+
+    // Follow the next page link if present
+    const linkHeader = res.headers.get('Link');
+    const nextUrl = parseLinkHeader(linkHeader, 'next');
+    if (nextUrl) {
+      // The Link header URL is absolute (pointing at Canvas). Rewrite it
+      // through the CORS proxy / dev proxy just like the initial request.
+      url = proxyUrl(nextUrl, base);
+    } else {
+      url = null;
+    }
+  }
+
+  return allResults;
+}
+
 // ── Canvas API methods ─────────────────────────────────────────
 
 const SCHEDULE_FILENAME = 'schedule-planner.json';
 
 export const CanvasAPI = {
-  /** List courses where the user is a teacher. */
+  /** List courses where the user is a teacher (paginated). */
   listCourses: (b, t) =>
-    canvasFetch(b, t, '/courses?enrollment_type=teacher&state[]=available&state[]=unpublished&state[]=created&include[]=term&per_page=100'),
+    canvasFetchAll(b, t, '/courses?enrollment_type=teacher&state[]=available&state[]=unpublished&state[]=created&include[]=term&per_page=100'),
 
-  /** List all assignments in a course. */
+  /** List all assignments in a course (paginated). */
   listAssignments: (b, t, c) =>
-    canvasFetch(b, t, `/courses/${c}/assignments?per_page=100`),
+    canvasFetchAll(b, t, `/courses/${c}/assignments?per_page=100`),
 
-  /** List files in a course (for the rich editor's file picker). */
+  /** List assignment groups in a course (paginated). */
+  listAssignmentGroups: (b, t, c) =>
+    canvasFetchAll(b, t, `/courses/${c}/assignment_groups?per_page=100`),
+
+  /** List files in a course (paginated, for the rich editor's file picker). */
   listFiles: (b, t, c) =>
-    canvasFetch(b, t, `/courses/${c}/files?per_page=100&sort=name`),
+    canvasFetchAll(b, t, `/courses/${c}/files?per_page=100&sort=name`),
 
-  /** List published pages in a course (for the rich editor's page picker). */
+  /** List published pages in a course (paginated, for the rich editor's page picker). */
   listPages: (b, t, c) =>
-    canvasFetch(b, t, `/courses/${c}/pages?per_page=100&sort=title&published=true`),
+    canvasFetchAll(b, t, `/courses/${c}/pages?per_page=100&sort=title&published=true`),
 
   /** Update an assignment's due date. */
   setDueDate: (b, t, c, a, dueAtISO) =>

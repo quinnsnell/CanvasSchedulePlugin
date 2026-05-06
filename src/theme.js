@@ -47,6 +47,20 @@ export function setTheme(dark) {
   T = dark ? DARK : LIGHT;
 }
 
+// ── Assignment group colors ────────────────────────────────────
+// Soft pastels that remain readable in both light and dark mode.
+// Cycled by index when assigning colors to assignment groups.
+export const GROUP_COLORS = [
+  '#5B8BD4', // soft blue
+  '#E07A5F', // terra cotta
+  '#6BBF8A', // soft green
+  '#D4A03A', // goldenrod
+  '#9B7FC4', // soft purple
+  '#E0859A', // dusty rose
+  '#4DACB0', // teal
+  '#C4854C', // warm brown
+];
+
 // ── Typography ─────────────────────────────────────────────────
 export const FONT_DISPLAY = "'Fraunces', 'Iowan Old Style', Georgia, serif";
 export const FONT_BODY = "'Geist', -apple-system, system-ui, sans-serif";

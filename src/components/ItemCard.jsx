@@ -7,10 +7,12 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   GripVertical, Pencil, Trash2, Copy, ExternalLink,
   Bold, Italic, Link as LinkIcon, FileText, BookOpen, X,
-  ChevronUp, ChevronDown,
+  ChevronUp, ChevronDown, Image,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
 import { fmtMonthDay } from '../utils.js';
@@ -22,8 +24,9 @@ import { pillStyle, iconBtnStyle, ToolbarBtn } from './ui.jsx';
 export default function ItemCard({
   item, isStudent, canvas,
   onUpdate, onDelete, onDuplicate, onMoveUp, onMoveDown,
-  draggingId, setDraggingId,
+  draggingId,
   autoEdit, onAutoEditConsumed,
+  assignmentGroups,
 }) {
   const isAssign = item.type === 'assign';
   const isRich = item.type === 'rich';
@@ -38,34 +41,44 @@ export default function ItemCard({
     }
   }, [autoEdit, isRich, isStudent, onAutoEditConsumed]);
 
-  const handleDragStart = (e) => {
-    if (isStudent) { e.preventDefault(); return; }
-    e.dataTransfer.setData('text/plain', item.id);
-    e.dataTransfer.effectAllowed = 'move';
-    setDraggingId(item.id);
-  };
+  const canDrag = !isStudent && !editing && !titleEditing;
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging: isSortableDragging,
+  } = useSortable({
+    id: item.id,
+    disabled: !canDrag,
+  });
 
   const accent = isAssign ? T.inkBlue : T.sienna;
   const accentSoft = isAssign ? T.inkBlueSoft : T.siennaSoft;
-  const isDragging = draggingId === item.id;
+  const isDragging = isSortableDragging || draggingId === item.id;
+
+  const style = {
+    background: T.paper,
+    border: `1px solid ${T.border}`,
+    borderLeft: `3px solid ${accent}`,
+    borderRadius: 3,
+    padding: '10px 12px',
+    display: 'flex', gap: 8, alignItems: 'flex-start',
+    cursor: canDrag ? 'grab' : 'default',
+    transition: transition || 'opacity 120ms',
+    minWidth: 0,
+    transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.4 : 1,
+  };
 
   return (
     <div
-      draggable={!isStudent && !editing && !titleEditing}
-      onDragStart={handleDragStart}
-      onDragEnd={() => setDraggingId(null)}
-      className={`planner-card ${isDragging ? 'item-dragging' : ''}`}
-      style={{
-        background: T.paper,
-        border: `1px solid ${T.border}`,
-        borderLeft: `3px solid ${accent}`,
-        borderRadius: 3,
-        padding: '10px 12px',
-        display: 'flex', gap: 8, alignItems: 'flex-start',
-        cursor: !isStudent && !editing && !titleEditing ? 'grab' : 'default',
-        transition: 'opacity 120ms',
-        minWidth: 0,
-      }}
+      ref={setNodeRef}
+      className="planner-card"
+      style={style}
+      {...attributes}
     >
       {/* Reorder grip + arrow buttons */}
       {!isStudent && (
@@ -75,7 +88,8 @@ export default function ItemCard({
               <ChevronUp size={12} />
             </button>
           )}
-          <div style={{ color: T.faint }} aria-hidden="true">
+          <div style={{ color: T.faint, cursor: canDrag ? 'grab' : 'default', touchAction: 'none' }}
+               aria-hidden="true" {...(canDrag ? listeners : {})}>
             <GripVertical size={14} />
           </div>
           {onMoveDown && (
@@ -93,6 +107,7 @@ export default function ItemCard({
             item={item} isStudent={isStudent}
             titleEditing={titleEditing} setTitleEditing={setTitleEditing}
             onUpdate={onUpdate} accent={accent} accentSoft={accentSoft}
+            assignmentGroups={assignmentGroups}
           />
         )}
         {isRich && (
@@ -131,13 +146,76 @@ export default function ItemCard({
   );
 }
 
+/**
+ * DragOverlayCard — static (non-sortable) version of ItemCard used in the DragOverlay.
+ * Renders the same visual but without dnd-kit hooks.
+ */
+export function DragOverlayCard({ item }) {
+  if (!item) return null;
+  const isAssign = item.type === 'assign';
+  const accent = isAssign ? T.inkBlue : T.sienna;
+
+  return (
+    <div
+      className="planner-card"
+      style={{
+        background: T.paper,
+        border: `1px solid ${T.border}`,
+        borderLeft: `3px solid ${accent}`,
+        borderRadius: 3,
+        padding: '10px 12px',
+        display: 'flex', gap: 8, alignItems: 'flex-start',
+        cursor: 'grabbing',
+        minWidth: 0,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        opacity: 0.95,
+        width: 320,
+      }}
+    >
+      <div style={{ color: T.faint, flexShrink: 0, paddingTop: 2 }} aria-hidden="true">
+        <GripVertical size={14} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {isAssign ? (
+          <>
+            <div style={{ marginBottom: 4 }}>
+              <span style={pillStyle(T.inkBlue, T.inkBlueSoft)}>Assignment</span>
+            </div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: '15px', fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
+              {item.title || 'Untitled'}
+            </div>
+          </>
+        ) : (
+          <div
+            className="planner-rich"
+            style={{ fontFamily: FONT_BODY, fontSize: '14px', color: T.inkMid, lineHeight: 1.5, maxHeight: 60, overflow: 'hidden' }}
+            dangerouslySetInnerHTML={{ __html: item.html || '<em>Note</em>' }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Assignment card content ────────────────────────────────────
 
-function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onUpdate, accent, accentSoft }) {
+function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onUpdate, accent, accentSoft, assignmentGroups }) {
+  const group = item.groupId && assignmentGroups ? assignmentGroups[item.groupId] : null;
   return (
     <>
       <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 4 }}>
         <span style={pillStyle(accent, accentSoft)}>Assignment</span>
+        {group && (
+          <span style={{
+            fontFamily: FONT_MONO, fontSize: '9px', fontWeight: 500,
+            padding: '1px 6px', borderRadius: 8,
+            color: group.color, background: `${group.color}18`,
+            border: `1px solid ${group.color}44`,
+            letterSpacing: '0.04em', whiteSpace: 'nowrap',
+          }}>
+            {group.name}
+          </span>
+        )}
         {item.canvasId ? (
           <span style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted }}>
             Canvas #{item.canvasId}
@@ -236,6 +314,34 @@ function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
     ref.current?.focus();
   };
 
+  const fileInputRef = useRef(null);
+
+  const insertImageFromFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      document.execCommand('insertImage', false, reader.result);
+      ref.current?.focus();
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageButton = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        insertImageFromFile(item.getAsFile());
+        return;
+      }
+    }
+  };
+
   const insertLink = () => {
     const url = window.prompt('Link URL:');
     if (!url) return;
@@ -278,6 +384,18 @@ function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
         <ToolbarBtn onClick={() => exec('italic')} title="Italic"><Italic size={12} /></ToolbarBtn>
         <ToolbarBtn onClick={() => exec('insertUnorderedList')} title="Bullet list">•</ToolbarBtn>
         <ToolbarBtn onClick={insertLink} title="Insert link"><LinkIcon size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={handleImageButton} title="Insert image"><Image size={12} /></ToolbarBtn>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) insertImageFromFile(file);
+            e.target.value = '';
+          }}
+        />
         {canvasReady && (
           <>
             <ToolbarBtn onClick={() => openCanvasPicker('files')} title="Insert Canvas file link">
@@ -314,11 +432,19 @@ function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
       )}
 
       {/* Editable area */}
+      <style>{`
+        .planner-rich-editor img {
+          max-width: 100%;
+          border-radius: 4px;
+          margin: 4px 0;
+        }
+      `}</style>
       <div
         ref={ref}
-        className="planner-rich"
+        className="planner-rich planner-rich-editor"
         contentEditable
         suppressContentEditableWarning
+        onPaste={handlePaste}
         style={{
           fontFamily: FONT_BODY, fontSize: '14px', color: T.inkMid, lineHeight: 1.5,
           minHeight: 60, padding: 8, border: `1px solid ${T.borderStrong}`,

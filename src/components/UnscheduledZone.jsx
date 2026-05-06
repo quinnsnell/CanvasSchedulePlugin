@@ -2,31 +2,33 @@
  * UnscheduledZone — sidebar drop target for items without a scheduled date.
  * Items dragged here are removed from the calendar. Canvas assignments
  * imported without a due_at also land here.
+ *
+ * Uses @dnd-kit/core useDroppable + @dnd-kit/sortable SortableContext
+ * for touch-friendly drag-and-drop.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
+import { useDroppable } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { T } from '../theme.js';
 import ItemCard from './ItemCard.jsx';
 
 export default function UnscheduledZone({
-  items, canvas, onMoveItem, onUpdateItem, onDeleteItem,
-  draggingId, setDraggingId, autoEditId, clearAutoEdit,
+  items, canvas, assignmentGroups, onMoveItem, onUpdateItem, onDeleteItem,
+  draggingId, autoEditId, clearAutoEdit,
 }) {
-  const [hovering, setHovering] = useState(false);
+  const { isOver, setNodeRef } = useDroppable({
+    id: 'unscheduled',
+    data: { type: 'unscheduled' },
+  });
+
+  const itemIds = items.map((item) => item.id);
 
   return (
     <div
-      onDragOver={(e) => { e.preventDefault(); setHovering(true); }}
-      onDragLeave={() => setHovering(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setHovering(false);
-        setDraggingId(null);
-        const id = e.dataTransfer.getData('text/plain');
-        if (id) onMoveItem(id, null);
-      }}
+      ref={setNodeRef}
       style={{
-        background: hovering ? T.inkBlueSoft : T.subtle,
+        background: isOver ? T.inkBlueSoft : T.subtle,
         border: `1px dashed ${T.borderStrong}`,
         borderRadius: 4, padding: 12, minHeight: 120,
         display: 'flex', flexDirection: 'column', gap: 8,
@@ -39,15 +41,18 @@ export default function UnscheduledZone({
           Imported assignments without a due date land here too.
         </div>
       )}
-      {items.map((item) => (
-        <ItemCard
-          key={item.id} item={item} isStudent={false} canvas={canvas}
-          onUpdate={onUpdateItem} onDelete={onDeleteItem}
-          draggingId={draggingId} setDraggingId={setDraggingId}
-          autoEdit={autoEditId === item.id}
-          onAutoEditConsumed={clearAutoEdit}
-        />
-      ))}
+      <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+        {items.map((item) => (
+          <ItemCard
+            key={item.id} item={item} isStudent={false} canvas={canvas}
+            onUpdate={onUpdateItem} onDelete={onDeleteItem}
+            draggingId={draggingId}
+            autoEdit={autoEditId === item.id}
+            onAutoEditConsumed={clearAutoEdit}
+            assignmentGroups={assignmentGroups}
+          />
+        ))}
+      </SortableContext>
     </div>
   );
 }

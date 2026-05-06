@@ -132,6 +132,167 @@ export function generateICal(state) {
   return lines.join('\r\n');
 }
 
+// ── iCal import (parse .ics text) ──────────────────────────────
+
+/**
+ * Parse iCal (.ics) text and extract events.
+ * Returns [{ title, date: 'YYYY-MM-DD', description? }].
+ * Handles both DATE and DATE-TIME DTSTART formats, and folded lines.
+ */
+export function parseICal(text) {
+  // Unfold continuation lines (RFC 5545 §3.1: CRLF + whitespace)
+  const unfolded = text.replace(/\r?\n[ \t]/g, '');
+  const lines = unfolded.split(/\r?\n/);
+  const events = [];
+  let inEvent = false;
+  let cur = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === 'BEGIN:VEVENT') {
+      inEvent = true;
+      cur = {};
+      continue;
+    }
+    if (trimmed === 'END:VEVENT') {
+      if (cur && cur.title && cur.date) {
+        events.push({
+          title: cur.title,
+          date: cur.date,
+          ...(cur.description ? { description: cur.description } : {}),
+        });
+      }
+      inEvent = false;
+      cur = null;
+      continue;
+    }
+    if (!inEvent || !cur) continue;
+
+    // Parse property:value, accounting for parameters (e.g. DTSTART;VALUE=DATE:20260115)
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx < 0) continue;
+    const propPart = trimmed.slice(0, colonIdx).toUpperCase();
+    const value = trimmed.slice(colonIdx + 1);
+    const propName = propPart.split(';')[0];
+
+    if (propName === 'SUMMARY') {
+      cur.title = value.replace(/\\n/g, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').trim();
+    } else if (propName === 'DESCRIPTION') {
+      cur.description = value.replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').trim();
+    } else if (propName === 'DTSTART') {
+      // DATE format: 20260115 or DATE-TIME: 20260115T120000 or 20260115T120000Z
+      const digits = value.replace(/[^0-9]/g, '');
+      if (digits.length >= 8) {
+        const y = digits.slice(0, 4);
+        const m = digits.slice(4, 6);
+        const d = digits.slice(6, 8);
+        cur.date = `${y}-${m}-${d}`;
+      }
+    }
+  }
+  return events;
+}
+
+// ── CSV import ─────────────────────────────────────────────────
+
+/**
+ * Parse simple CSV with headers. Expects columns like "date" and "title"
+ * (case-insensitive header matching). Returns [{ title, date: 'YYYY-MM-DD', description? }].
+ * Handles quoted fields containing commas and newlines.
+ */
+export function parseCSV(text) {
+  const rows = parseCSVRows(text);
+  if (rows.length < 2) return [];
+
+  // Map headers to column indices (case-insensitive)
+  const headers = rows[0].map((h) => h.trim().toLowerCase());
+  const dateIdx = headers.findIndex((h) => h === 'date');
+  const titleIdx = headers.findIndex((h) => h === 'title' || h === 'summary' || h === 'name' || h === 'event');
+  const descIdx = headers.findIndex((h) => h === 'description' || h === 'desc' || h === 'notes' || h === 'details');
+
+  if (dateIdx < 0 || titleIdx < 0) return [];
+
+  const events = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const rawDate = (row[dateIdx] || '').trim();
+    const title = (row[titleIdx] || '').trim();
+    if (!rawDate || !title) continue;
+
+    const date = normalizeDate(rawDate);
+    if (!date) continue;
+
+    const ev = { title, date };
+    if (descIdx >= 0 && row[descIdx]?.trim()) {
+      ev.description = row[descIdx].trim();
+    }
+    events.push(ev);
+  }
+  return events;
+}
+
+/** Split CSV text into rows of fields, respecting quoted fields. */
+function parseCSVRows(text) {
+  const rows = [];
+  let current = [];
+  let field = '';
+  let inQuotes = false;
+  const chars = text.replace(/\r\n/g, '\n');
+
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (chars[i + 1] === '"') {
+          field += '"';
+          i++; // skip escaped quote
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        current.push(field);
+        field = '';
+      } else if (ch === '\n') {
+        current.push(field);
+        field = '';
+        if (current.some((f) => f.trim())) rows.push(current);
+        current = [];
+      } else {
+        field += ch;
+      }
+    }
+  }
+  // Last field/row
+  current.push(field);
+  if (current.some((f) => f.trim())) rows.push(current);
+  return rows;
+}
+
+/** Normalize various date formats to YYYY-MM-DD. */
+function normalizeDate(str) {
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  // YYYY/MM/DD
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(str)) return str.replace(/\//g, '-');
+  // MM/DD/YYYY or M/D/YYYY
+  const mdy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (mdy) {
+    return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+  }
+  // Try Date.parse as fallback
+  const d = new Date(str);
+  if (!isNaN(d)) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  return null;
+}
+
 // ── Persistence ────────────────────────────────────────────────
 
 const KEY_PREFIX = 'class-planner-v3';

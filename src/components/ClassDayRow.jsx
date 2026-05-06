@@ -6,6 +6,8 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useDroppable } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
   FileText, BookOpen, ExternalLink, CalendarPlus, MinusCircle,
   Hourglass, Ban, ListPlus,
@@ -21,12 +23,11 @@ export default function ClassDayRow({
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
   onToggleHoliday, onAddModule, onReorder,
-  addableDates, draggingId, setDraggingId,
+  addableDates, draggingId,
   autoEditId, clearAutoEdit,
+  assignmentGroups,
 }) {
-  const [hovering, setHovering] = useState(false);
   const [showAddDay, setShowAddDay] = useState(false);
-  const [dropIdx, setDropIdx] = useState(null);
 
   const d = new Date(date + 'T00:00:00');
   const weekShade = (weekIdx ?? 0) % 2 === 1;
@@ -110,9 +111,7 @@ export default function ClassDayRow({
       <ContentColumn
         items={items} date={date} isStudent={isStudent} canvas={canvas}
         canvasReady={canvasReady} holidayLabel={holidayLabel}
-        hovering={hovering} setHovering={setHovering}
-        dropIdx={dropIdx} setDropIdx={setDropIdx}
-        draggingId={draggingId} setDraggingId={setDraggingId}
+        draggingId={draggingId}
         onMoveItem={onMoveItem} onUpdateItem={onUpdateItem} onDeleteItem={onDeleteItem}
         onDuplicate={onDuplicate} onReorder={onReorder}
         onAddNote={onAddNote} onAddAssignment={onAddAssignment}
@@ -141,26 +140,23 @@ function StatusBadge({ color, borderColor, children }) {
 
 function ContentColumn({
   items, date, isStudent, canvas, canvasReady, holidayLabel,
-  hovering, setHovering, dropIdx, setDropIdx,
-  draggingId, setDraggingId,
+  draggingId,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
   onAddNote, onAddAssignment,
   autoEditId, clearAutoEdit,
 }) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: `day:${date}`,
+    data: { type: 'day', date },
+    disabled: isStudent,
+  });
+
+  const itemIds = items.map((item) => item.id);
+
   return (
     <div
-      onDragOver={(e) => { if (!isStudent) e.preventDefault(); }}
-      onDragLeave={() => { setHovering(false); setDropIdx(null); }}
-      onDrop={(e) => {
-        if (isStudent) return;
-        e.preventDefault();
-        setHovering(false);
-        setDraggingId(null);
-        const id = e.dataTransfer.getData('text/plain');
-        if (id) onMoveItem(id, date, dropIdx != null ? dropIdx : undefined);
-        setDropIdx(null);
-      }}
-      className={hovering ? 'drop-target-active' : ''}
+      ref={setNodeRef}
+      className={isOver && !isStudent ? 'drop-target-active' : ''}
       style={{
         padding: '12px', minHeight: 60,
         display: 'flex', flexDirection: 'column', gap: 0,
@@ -173,39 +169,23 @@ function ContentColumn({
         </div>
       )}
 
-      {items.map((item, idx) => (
-        <React.Fragment key={item.id}>
-          {/* Drop zone indicator before each item */}
-          {!isStudent && draggingId && draggingId !== item.id && (
-            <DropZone
-              active={dropIdx === idx}
-              onActivate={(e) => { e.preventDefault(); e.stopPropagation(); setDropIdx(idx); setHovering(true); }}
-              onDeactivate={(e) => { e.stopPropagation(); if (dropIdx === idx) setDropIdx(null); }}
-            />
-          )}
-          <div style={{ marginBottom: 8 }}>
+      <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
+        {items.map((item, idx) => (
+          <div key={item.id} style={{ marginBottom: 8 }}>
             <ItemCard
               item={item} isStudent={isStudent} canvas={canvas}
               onUpdate={onUpdateItem} onDelete={onDeleteItem}
               onDuplicate={() => onDuplicate(item.id)}
               onMoveUp={idx > 0 ? () => onReorder(idx, idx - 1) : null}
               onMoveDown={idx < items.length - 1 ? () => onReorder(idx, idx + 1) : null}
-              draggingId={draggingId} setDraggingId={setDraggingId}
+              draggingId={draggingId}
               autoEdit={autoEditId === item.id}
               onAutoEditConsumed={clearAutoEdit}
+              assignmentGroups={assignmentGroups}
             />
           </div>
-        </React.Fragment>
-      ))}
-
-      {/* Drop zone after the last item */}
-      {!isStudent && draggingId && items.length > 0 && (
-        <DropZone
-          active={dropIdx === items.length}
-          onActivate={(e) => { e.preventDefault(); e.stopPropagation(); setDropIdx(items.length); setHovering(true); }}
-          onDeactivate={(e) => { e.stopPropagation(); if (dropIdx === items.length) setDropIdx(null); }}
-        />
-      )}
+        ))}
+      </SortableContext>
 
       {/* Add note / assignment buttons */}
       {!isStudent && !holidayLabel && (
@@ -223,23 +203,6 @@ function ContentColumn({
         </div>
       )}
     </div>
-  );
-}
-
-// ── Drop zone indicator (thin line between items during drag) ──
-
-function DropZone({ active, onActivate, onDeactivate }) {
-  return (
-    <div
-      onDragOver={onActivate}
-      onDragLeave={onDeactivate}
-      style={{
-        height: active ? 6 : 4,
-        borderRadius: 2,
-        background: active ? T.inkBlue : 'transparent',
-        transition: 'all 120ms',
-      }}
-    />
   );
 }
 
