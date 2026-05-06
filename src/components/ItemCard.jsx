@@ -274,10 +274,10 @@ function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
     <div>
       {/* Toolbar */}
       <div className="flex items-center gap-1 mb-2 flex-wrap">
-        <ToolbarBtn onClick={() => exec('bold')}><Bold size={12} /></ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('italic')}><Italic size={12} /></ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('insertUnorderedList')}>•</ToolbarBtn>
-        <ToolbarBtn onClick={insertLink}><LinkIcon size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('bold')} title="Bold"><Bold size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('italic')} title="Italic"><Italic size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('insertUnorderedList')} title="Bullet list">•</ToolbarBtn>
+        <ToolbarBtn onClick={insertLink} title="Insert link"><LinkIcon size={12} /></ToolbarBtn>
         {canvasReady && (
           <>
             <ToolbarBtn onClick={() => openCanvasPicker('files')} title="Insert Canvas file link">

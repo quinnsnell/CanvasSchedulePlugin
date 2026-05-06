@@ -44,9 +44,10 @@ export function Field({ label, children }) {
 // ── Icon button (square, bordered) ─────────────────────────────
 
 export function IconButton({ children, onClick, title, disabled, ...rest }) {
+  const label = title || rest['aria-label'];
   return (
-    <button onClick={onClick} title={title} disabled={disabled}
-      aria-label={rest['aria-label'] || title}
+    <button onClick={onClick} title={label} disabled={disabled}
+      aria-label={label}
       style={{
         padding: 8, border: `1px solid ${T.border}`, borderRadius: 3,
         background: T.paper, color: disabled ? T.faint : T.ink,
@@ -80,9 +81,9 @@ export function ToggleButton({ active, children, onClick, ...rest }) {
 
 // ── Action button (primary or secondary) ───────────────────────
 
-export function ActionButton({ children, onClick, primary }) {
+export function ActionButton({ children, onClick, primary, disabled }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} disabled={disabled}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '7px 14px', borderRadius: 3,
@@ -90,7 +91,8 @@ export function ActionButton({ children, onClick, primary }) {
         border: `1px solid ${primary ? T.inkBlue : T.border}`,
         background: primary ? T.inkBlue : T.paper,
         color: primary ? '#fff' : T.ink,
-        cursor: 'pointer',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
       }}>
       {children}
     </button>

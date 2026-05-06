@@ -81,7 +81,7 @@ export function SetupPanel({ state, updateState, onClose }) {
 
 // ── Canvas Panel ───────────────────────────────────────────────
 
-export function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitchCourse, onClose }) {
+export function CanvasPanel({ state, updateState, onConnect, onRefresh, refreshing, onSwitchCourse, onClose }) {
   const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
   const [token, setToken] = useState(state.canvas.token || '');
   const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
@@ -153,8 +153,8 @@ export function CanvasPanel({ state, updateState, onConnect, onRefresh, onSwitch
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-              <ActionButton onClick={onRefresh}>
-                <RefreshCw size={14} /> Refresh
+              <ActionButton onClick={onRefresh} disabled={refreshing}>
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing…' : 'Refresh'}
               </ActionButton>
             </>
           )}

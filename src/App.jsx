@@ -71,6 +71,8 @@ export default function ClassPlannerApp() {
   const [studentEmbed, setStudentEmbed] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
   const [showShiftModal, setShowShiftModal] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const v = localStorage.getItem('planner-dark-mode');
@@ -515,6 +517,7 @@ export default function ClassPlannerApp() {
       showToast('Connect to Canvas and pick a course first', 'err');
       return;
     }
+    setPublishing(true);
     try {
       // Conflict detection: warn if another instructor published since our last load
       const remote = await CanvasAPI.downloadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId).catch(() => null);
@@ -549,6 +552,8 @@ export default function ClassPlannerApp() {
       showToast('Published schedule to Canvas');
     } catch (e) {
       showToast(`Publish failed: ${e.message}`, 'err');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -660,6 +665,7 @@ export default function ClassPlannerApp() {
       showToast('Pick a course first', 'err');
       return;
     }
+    setRefreshing(true);
 
     let published = null;
     try {
@@ -670,7 +676,7 @@ export default function ClassPlannerApp() {
     try {
       list = await CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
     } catch (e) {
-      if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); return; }
+      if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); setRefreshing(false); return; }
     }
 
     updateState((s) => {
@@ -740,6 +746,7 @@ export default function ClassPlannerApp() {
       showToast(parts.length ? `Refreshed: ${parts.join(', ')}` : 'No changes');
       return s;
     });
+    setRefreshing(false);
   };
 
   // ════════════════════════════════════════════════════════════
@@ -857,7 +864,7 @@ export default function ClassPlannerApp() {
         onToggleStudent={() => updateState((s) => { s.studentView = !s.studentView; return s; })}
         onUndo={undo} onExportICal={exportICal}
         onShowShiftModal={() => setShowShiftModal(true)}
-        onPublish={publishToCanvas}
+        onPublish={publishToCanvas} publishing={publishing}
         onToggleCanvas={() => setShowCanvas((v) => !v)}
         onToggleSetup={() => setShowSetup((v) => !v)}
       />
@@ -875,7 +882,7 @@ export default function ClassPlannerApp() {
       {!isStudent && showCanvas && (
         <CanvasPanel
           state={state} updateState={updateState}
-          onConnect={connectCanvas} onRefresh={refreshFromCanvas}
+          onConnect={connectCanvas} onRefresh={refreshFromCanvas} refreshing={refreshing}
           onSwitchCourse={switchCourse}
           onClose={() => setShowCanvas(false)}
         />
@@ -959,7 +966,7 @@ export default function ClassPlannerApp() {
 function Header({
   state, isStudent, hashStudent, allDays, darkMode, undoStack,
   onToggleDark, onToggleStudent, onUndo, onExportICal,
-  onShowShiftModal, onPublish, onToggleCanvas, onToggleSetup,
+  onShowShiftModal, onPublish, publishing, onToggleCanvas, onToggleSetup,
 }) {
   return (
     <header role="banner" style={{ borderBottom: `1px solid ${T.border}`, background: T.paper }}>
@@ -1016,8 +1023,8 @@ function Header({
                   <ChevronRight size={16} />
                 </IconButton>
                 {state.canvas.connected && state.canvas.courseId && (
-                  <IconButton onClick={onPublish} aria-label="Publish schedule to Canvas">
-                    <Upload size={16} />
+                  <IconButton onClick={onPublish} aria-label="Publish schedule to Canvas" disabled={publishing}>
+                    {publishing ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
                   </IconButton>
                 )}
                 <IconButton onClick={onToggleCanvas} aria-label="Canvas connection settings">
