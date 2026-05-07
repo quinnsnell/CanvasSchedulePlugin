@@ -13,47 +13,67 @@ The app exists because Canvas's native syllabus and calendar pages don't offer a
 - **Single-page React app** (Vite + React 18). No backend.
 - **Canvas API** is called directly from the browser using a user-supplied Personal Access Token. Requests go to `<canvasBaseUrl>/api/v1/...` with `Authorization: Bearer <token>`.
 - **Persistence** uses `localStorage` when hosted, or `window.storage` when running inside a claude.ai artifact. The `Store` object handles both via a runtime check.
-- **Drag-and-drop** uses HTML5 native (no library). Touch devices get a degraded experience — buttons still work but cards don't drag well. See "Outstanding work" below.
-- **Styling** is mostly inline styles against a small theme object `T`. Tailwind core utility classes (loaded via the CDN in `index.html`) are used for layout helpers (flex/grid/gap/spacing). Responsive layout via CSS media queries inside a `<style>` block in `App.jsx`.
+- **Drag-and-drop** uses `@dnd-kit/core` + `@dnd-kit/sortable` for touch-friendly DnD (pointer, touch, and keyboard sensors).
+- **Styling** is mostly inline styles against a small theme object `T`. Tailwind v4 (PostCSS build via `@tailwindcss/postcss`) provides layout utility classes. Responsive layout via CSS media queries in `src/styles.js`.
 
 ## File map
 
 ```
 .
-├── index.html                  # Vite entry, includes Tailwind CDN
+├── index.html                  # Vite entry
 ├── package.json
 ├── vite.config.js              # base: './' for sub-path deploys
+├── postcss.config.js           # Tailwind v4 + autoprefixer
 ├── README.md                   # human-facing
 ├── CLAUDE.md                   # you are here
+├── CONTRIBUTING.md             # contributor guide
+├── CODE_OF_CONDUCT.md
+├── dev.sh                      # start dev server with Canvas URL env
+├── .github/
+│   ├── workflows/ci.yml        # build + test CI
+│   ├── ISSUE_TEMPLATE/         # bug report + feature request templates
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── cors-proxy/
 │   ├── worker.js               # Cloudflare Worker CORS proxy (~50 lines)
 │   └── wrangler.toml           # Wrangler config for deployment
 └── src/
     ├── main.jsx                # ReactDOM.createRoot + ErrorBoundary
-    ├── index.css               # box-sizing reset only
-    ├── theme.js                # Light/dark palettes, fonts, setTheme()
-    ├── utils.js                # Day codes, date math, iCal, Store (persistence)
-    ├── canvas-api.js           # CORS proxy config, Canvas REST API client
+    ├── index.css               # Tailwind v4 import + box-sizing reset
+    ├── theme.js                # Light/dark palettes, fonts, setTheme(), GROUP_COLORS
+    ├── styles.js               # App-level CSS (responsive, print, a11y)
+    ├── utils.js                # Day codes, date math, iCal/CSV parse, templates, Store
+    ├── canvas-api.js           # CORS proxy config, Canvas REST API client (paginated)
+    ├── render-schedule-html.js # Static HTML table for Canvas Page publish
     ├── App.jsx                 # Main component: state, handlers, layout
+    ├── __tests__/
+    │   └── utils.test.js       # 68 unit tests for utils.js
     └── components/
         ├── ui.jsx              # Shared primitives: Field, IconButton, ActionButton, etc.
-        ├── ClassDayRow.jsx     # Schedule row + AddDayPopover
+        ├── Header.jsx          # App toolbar: title, search, action buttons
+        ├── ScheduleTable.jsx   # Schedule grid: column headers + day rows
+        ├── ClassDayRow.jsx     # One schedule row + AddDayPopover
         ├── ItemCard.jsx        # Assignment/note card + RichEditor
         ├── UnscheduledZone.jsx # Sidebar drop target
-        └── Panels.jsx          # SetupPanel, CanvasPanel, ShiftModal, EmptyState
+        ├── PublishBanner.jsx   # Publish success banner + ActivityLog
+        └── Panels.jsx          # SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState
 ```
 
 | Module | Purpose |
 |---|---|
-| `theme.js` | LIGHT/DARK palettes, `T` (mutable current palette), `setTheme()`, font constants |
-| `utils.js` | Day-of-week codes, date math (`generateClassDays`, `computeAllDays`, `weekKey`, etc.), `Store` persistence, iCal generation |
-| `canvas-api.js` | CORS proxy URL management, `canvasFetch()` wrapper, `CanvasAPI` methods (courses, assignments, files, pages, publish) |
+| `theme.js` | LIGHT/DARK palettes, `T` (mutable current palette), `setTheme()`, font constants, GROUP_COLORS |
+| `styles.js` | App-level CSS string (responsive breakpoints, print styles, accessibility, animations) |
+| `utils.js` | Day-of-week codes, date math, iCal generation/parsing, CSV parsing, semester templates, `Store` persistence |
+| `canvas-api.js` | CORS proxy URL management, `canvasFetch()`/`canvasFetchAll()` (paginated), `CanvasAPI` methods |
+| `render-schedule-html.js` | Pure function: generates static HTML table for Canvas Page publish (dark mode responsive) |
 | `App.jsx` | `ClassPlannerApp` — owns all state, undo stack, Canvas sync, renders layout |
 | `components/ui.jsx` | `Field`, `IconButton`, `ToggleButton`, `ActionButton`, `ToolbarBtn`, `DayToolBtn`, style helpers |
+| `components/Header.jsx` | App header with course title, metadata, collapsible search, and toolbar buttons |
+| `components/ScheduleTable.jsx` | Schedule grid table with column headers, module headers, and day rows |
 | `components/ClassDayRow.jsx` | One row of the schedule grid (date column + content column + day tools) |
-| `components/ItemCard.jsx` | Renders an assignment or rich-text card; includes `RichEditor` |
+| `components/ItemCard.jsx` | Renders an assignment or rich-text card; includes `RichEditor` and `DragOverlayCard` |
 | `components/UnscheduledZone.jsx` | Sidebar drop target for items without a date |
-| `components/Panels.jsx` | `SetupPanel`, `CanvasPanel`, `ShiftModal`, `EmptyState` |
+| `components/PublishBanner.jsx` | Publish success banner with copy-link, and `ActivityLog` publish history |
+| `components/Panels.jsx` | `SetupPanel` (semester + Canvas connection + import/templates), `ShiftModal`, `ConflictModal`, `RecurringModal`, `EmptyState` |
 
 ## Data model
 
@@ -68,14 +88,15 @@ state = {
   canvas: {
     baseUrl, token, courseId,
     connected: bool,
-    courses: [{ id, name }]
+    courses: [{ id, name }],
+    assignmentGroups: { [groupId]: { id, name, color } }
   },
   items: {
     [id]: {
       id,
       type: 'assign' | 'rich',
       // assign:
-      title?, points?, canvasId?, htmlUrl?, dueDate?, isDemo?,
+      title?, points?, canvasId?, htmlUrl?, dueDate?, isDemo?, groupId?,
       // rich:
       html?
     }
@@ -86,6 +107,7 @@ state = {
   holidays: { 'YYYY-MM-DD': 'label' },     // days marked as no-class
   modules: { 'YYYY-MM-DD': 'title' },      // unit/module headers shown before a date
   pendingCreations: [{ id, date, time }],  // tracks "+ Assignment" clicks awaiting Canvas creation
+  publishHistory: [{ timestamp, itemCount, dayCount }],
   loadedAt: ISO timestamp,                 // when last refreshed from Canvas (for conflict detection)
   studentView: bool,
 }
@@ -96,7 +118,7 @@ Teaching days are derived from `setup`, never stored. The grid renders `allDays 
 ## Canvas integration flow
 
 ### Connect
-User enters Canvas base URL + Personal Access Token in the Canvas panel. We call `GET /api/v1/courses?enrollment_type=teacher` to populate the course picker.
+User enters Canvas base URL + Personal Access Token in the Course Setup panel. We call `GET /api/v1/courses?enrollment_type=teacher` to populate the course picker.
 
 ### Refresh / import
 `refreshFromCanvas()` calls `GET /api/v1/courses/:id/assignments`. For each assignment:
@@ -112,10 +134,8 @@ Opens `<base>/courses/<id>/assignments/new` in a new tab and pushes a `pendingCr
 
 ## Important constraints
 
-- **CORS**: Canvas API blocks cross-origin browser requests. In production, requests route through a Cloudflare Worker CORS proxy (`cors-proxy/worker.js`). The proxy URL is configurable per-institution via the Canvas panel UI, `VITE_CORS_PROXY` env var, or localStorage. In dev, Vite's built-in proxy handles it.
+- **CORS**: Canvas API blocks cross-origin browser requests. In production, requests route through a Cloudflare Worker CORS proxy (`cors-proxy/worker.js`). The proxy URL is configurable per-institution via the setup panel, `VITE_CORS_PROXY` env var, or localStorage. In dev, Vite's built-in proxy handles it.
 - **Token safety**: Personal Access Token sits in `localStorage`. Acceptable for a single-instructor tool on their own machine. **Do NOT deploy this multi-tenant** — switch to OAuth2 or an LTI 1.3 integration if multiple instructors will use it.
-- **Mobile drag-and-drop**: HTML5 DnD is unreliable on touch. If full mobile editing matters, swap in `@dnd-kit/core` (recommended) or add explicit "Move to…" dropdowns on cards.
-- **Tailwind via CDN**: convenient for getting started but adds a runtime dependency on a third-party CDN. For production, swap to a PostCSS-based Tailwind build.
 - **`document.execCommand`** is used by the rich-text editor. It's deprecated but still works in all major browsers in 2026. If it breaks, swap to `tiptap` or `lexical`.
 
 ## Deployment
@@ -134,20 +154,17 @@ Opens `<base>/courses/<id>/assignments/new` in a new tab and pushes a `pendingCr
 
 ## Outstanding work / good first issues
 
-- **"Move to…" tap menu** on cards for touch devices — would unlock mobile editing.
 - **Full LTI 1.3** instead of token-based auth (much bigger effort; only do this if going multi-instructor).
-- **Tailwind PostCSS build** to drop the CDN dependency.
-- **Multi-page assignment support** — Canvas API pagination (Link headers) for courses with 100+ assignments.
 
 ## Quick reference: where to change common things
 
 | I want to… | Edit… |
 |---|---|
 | Change colors | LIGHT/DARK palettes in `src/theme.js` |
-| Change fonts | `FONT_DISPLAY` / `FONT_BODY` / `FONT_MONO` in `src/theme.js` + the `@import` in `App.jsx`'s `<style>` |
+| Change fonts | `FONT_DISPLAY` / `FONT_BODY` / `FONT_MONO` in `src/theme.js` + the `@import` in `src/styles.js` |
 | Tweak week banding | Search `weekShade` and `isWeekStart` in `components/ClassDayRow.jsx` |
 | Add a Canvas API call | Add to `CanvasAPI` in `src/canvas-api.js` |
-| Adjust mobile breakpoints | The `<style>` block in `App.jsx`, look for `@media` |
+| Adjust mobile breakpoints | `src/styles.js`, look for `@media` |
 | Add a new item type | Extend `items[id].type` and update `components/ItemCard.jsx` to render it |
 | Add a shared button variant | Add to `components/ui.jsx` |
 | Change CORS proxy default | `CORS_PROXY_DEFAULT` in `src/canvas-api.js` |

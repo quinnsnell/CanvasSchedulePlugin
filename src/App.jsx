@@ -3,14 +3,11 @@
  *
  * Owns all application state (schedule, items, canvas connection, undo stack).
  * Delegates rendering to focused component modules:
- *   ClassDayRow, ItemCard, UnscheduledZone, Panels (Setup, Canvas, Shift, Empty).
+ *   Header, ScheduleTable, ClassDayRow, ItemCard, UnscheduledZone,
+ *   Panels (Setup, Shift, Conflict, Recurring, Empty),
+ *   PublishBanner, ActivityLog.
  *
- * State shape:
- *   setup:    { courseTitle, startDate, endDate, classDays }
- *   canvas:   { baseUrl, token, courseId, connected, courses }
- *   items:    { [id]: { id, type, title?, points?, canvasId?, html?, ... } }
- *   schedule: { 'YYYY-MM-DD': [itemId, ...] }
- *   extraDays, unscheduled, holidays, modules, pendingCreations, studentView
+ * State shape: see CLAUDE.md § Data model.
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
@@ -18,26 +15,24 @@ import {
   DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, closestCenter,
 } from '@dnd-kit/core';
+import { T, setTheme, FONT_BODY, FONT_MONO, GROUP_COLORS } from './theme.js';
 import {
-  X, Eye, EyeOff, Settings, RefreshCw,
-  Cloud, Upload, Calendar, History, Link2, Check,
-  Undo2, Redo2, ChevronRight, Printer, CalendarDays, Sun, Moon, Search, Repeat,
-} from 'lucide-react';
-import { T, LIGHT, DARK, setTheme, FONT_DISPLAY, FONT_BODY, FONT_MONO, GROUP_COLORS } from './theme.js';
-import {
-  DAY_CODES, DAY_FULL, PENDING_TTL_MS, uid,
-  generateClassDays, computeAllDays, getAddableDatesAfter,
-  weekKey, weekNumber, addDays, fmtMonthDay, fmtFull,
-  localDateStr, generateICal, parseICal, parseCSV, exportTemplate, importTemplate, Store,
+  DAY_CODES, PENDING_TTL_MS, uid,
+  generateClassDays, computeAllDays,
+  weekNumber, addDays, fmtMonthDay,
+  localDateStr, generateICal, exportTemplate, importTemplate, Store,
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
-import { IconButton, ToggleButton, inputStyle } from './components/ui.jsx';
-import ClassDayRow from './components/ClassDayRow.jsx';
+import renderScheduleHtml from './render-schedule-html.js';
+import Header from './components/Header.jsx';
+import ScheduleTable from './components/ScheduleTable.jsx';
+import { PublishBanner, ActivityLog } from './components/PublishBanner.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
 import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/Panels.jsx';
+import { appStyles } from './styles.js';
 
-// ── Initial state (blank — no demo data) ───────────────────────
+// ── Initial state ────────────────────────────────────────────────
 
 function freshState() {
   return {
@@ -61,12 +56,12 @@ function applyCourseInfo(state, course) {
   if (course?.name) state.setup.courseTitle = course.name;
 }
 
-// ════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
-// ════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 export default function ClassPlannerApp() {
-  // ── Core state ───────────────────────────────────────────────
+  // ── Core state ─────────────────────────────────────────────────
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -97,7 +92,7 @@ export default function ClassPlannerApp() {
   const stateRef = useRef(null);
   const hashStudent = window.location.hash === '#student';
 
-  // ── dnd-kit sensors (pointer + touch + keyboard) ────────────
+  // ── dnd-kit sensors ────────────────────────────────────────────
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
   const touchSensor = useSensor(TouchSensor, { activationConstraint: { distance: 5 } });
   const keyboardSensor = useSensor(KeyboardSensor);
@@ -109,7 +104,7 @@ export default function ClassPlannerApp() {
     try { localStorage.setItem('planner-dark-mode', darkMode); } catch {}
   }, [darkMode]);
 
-  // ── Initialization ───────────────────────────────────────────
+  // ── Initialization ─────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       const meta = await Store.loadMeta();
@@ -170,14 +165,13 @@ export default function ClassPlannerApp() {
             return s;
           });
         } catch {
-          // Token expired — user will need to re-enter credentials
           setState((prev) => ({ ...structuredClone(prev), canvas: { ...prev.canvas, connected: false } }));
         }
       }
     })();
   }, []);
 
-  // ── Auto-save on every state change ──────────────────────────
+  // ── Auto-save on every state change ────────────────────────────
   useEffect(() => {
     stateRef.current = state;
     if (!loaded || !state) return;
@@ -192,13 +186,13 @@ export default function ClassPlannerApp() {
     });
   }, [state, loaded]);
 
-  // ── Toast notifications ──────────────────────────────────────
+  // ── Toast notifications ────────────────────────────────────────
   const showToast = (msg, kind = 'ok') => {
     setToast({ msg, kind });
     setTimeout(() => setToast(null), 2400);
   };
 
-  // ── Derived data ─────────────────────────────────────────────
+  // ── Derived data ───────────────────────────────────────────────
   const allDays = useMemo(() => state ? computeAllDays(state.setup, state.extraDays) : [], [state]);
   const allDaysSet = useMemo(() => new Set(allDays), [allDays]);
   const teachingSet = useMemo(() =>
@@ -211,7 +205,7 @@ export default function ClassPlannerApp() {
     return m;
   }, [state]);
 
-  // ── Search filter: only show days whose items match the query ──
+  // ── Search filter ──────────────────────────────────────────────
   const filteredDays = useMemo(() => {
     const hasSearch = searchQuery.trim().length > 0;
     const hasGroupFilter = filterGroup !== null;
@@ -219,13 +213,11 @@ export default function ClassPlannerApp() {
     const q = hasSearch ? searchQuery.trim().toLowerCase() : '';
     return allDays.filter((d) => {
       const ids = state.schedule[d] || [];
-      // When group filtering, show days that have at least one item matching the group
-      // (or any non-assign items — we don't hide rich notes when filtering by group)
       if (hasGroupFilter && !hasSearch) {
         return ids.some((id) => {
           const item = state.items[id];
           if (!item) return false;
-          if (item.type !== 'assign') return true; // keep rich notes visible
+          if (item.type !== 'assign') return true;
           return item.groupId === filterGroup;
         });
       }
@@ -243,8 +235,7 @@ export default function ClassPlannerApp() {
     });
   }, [allDays, searchQuery, filterGroup, state]);
 
-  // ── Keyboard: Ctrl/Cmd+Z for undo, Ctrl/Cmd+Shift+Z for redo ──
-  // Uses refs so the effect doesn't capture stale closures
+  // ── Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z redo ──────────
   const undoRef = useRef(null);
   const redoRef = useRef(null);
   useEffect(() => {
@@ -253,29 +244,23 @@ export default function ClassPlannerApp() {
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.contentEditable === 'true') return;
       e.preventDefault();
-      if (e.shiftKey) {
-        redoRef.current?.();
-      } else {
-        undoRef.current?.();
-      }
+      if (e.shiftKey) { redoRef.current?.(); } else { undoRef.current?.(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // ── Window focus: sync pending assignment creations ──────────
+  // ── Window focus: sync pending assignment creations ─────────────
   const syncRef = useRef(null);
   useEffect(() => {
     const onFocus = () => {
       const s = stateRef.current;
       if (!s) return;
-      // Expire old pending creations
       const now = Date.now();
       const fresh = (s.pendingCreations || []).filter((p) => now - p.time < PENDING_TTL_MS);
       if (fresh.length !== (s.pendingCreations || []).length) {
         setState((prev) => ({ ...prev, pendingCreations: fresh }));
       }
-      // If pending creations exist, trigger a Canvas sync
       if (fresh.length > 0 && s.canvas.connected && s.canvas.courseId) {
         syncRef.current();
       }
@@ -284,7 +269,7 @@ export default function ClassPlannerApp() {
     return () => window.removeEventListener('focus', onFocus);
   }, []);
 
-  // ── dnd-kit: find which day (or 'unscheduled') an item lives on ──
+  // ── dnd-kit: find which container an item lives in ─────────────
   const findItemContainer = useCallback((itemId) => {
     const s = stateRef.current;
     if (!s) return null;
@@ -295,7 +280,6 @@ export default function ClassPlannerApp() {
     return null;
   }, []);
 
-  // ── dnd-kit event handlers ──────────────────────────────────
   const handleDragStart = useCallback((event) => {
     setDraggingId(event.active.id);
   }, []);
@@ -303,17 +287,16 @@ export default function ClassPlannerApp() {
   const handleDragEnd = useCallback((event) => {
     const { active, over } = event;
     setDraggingId(null);
-
     if (!over || !active) return;
     const s = stateRef.current;
     if (!s || s.studentView) return;
 
     const activeId = active.id;
     const overId = over.id;
-
     const sourceContainer = findItemContainer(activeId);
     if (sourceContainer === null) return;
 
+    // Determine target container from the drop target
     let targetContainer = null;
     if (over.data?.current?.type === 'day') {
       targetContainer = over.data.current.date;
@@ -324,15 +307,14 @@ export default function ClassPlannerApp() {
     } else {
       targetContainer = findItemContainer(overId);
     }
-
     if (targetContainer === null) return;
 
+    // Same container: reorder within day
     if (sourceContainer === targetContainer && sourceContainer !== 'unscheduled') {
       const arr = s.schedule[sourceContainer] || [];
       const oldIndex = arr.indexOf(activeId);
       const newIndex = arr.indexOf(overId);
       if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        // Inline reorder to avoid dependency on reorderOnDay
         setState((prev) => {
           const next = structuredClone(prev);
           const list = next.schedule[sourceContainer] || [];
@@ -348,14 +330,12 @@ export default function ClassPlannerApp() {
     // Different container: move item
     setState((prev) => {
       const next = structuredClone(prev);
-      // Remove from source
       if (sourceContainer === 'unscheduled') {
         next.unscheduled = next.unscheduled.filter((id) => id !== activeId);
       } else if (next.schedule[sourceContainer]) {
         next.schedule[sourceContainer] = next.schedule[sourceContainer].filter((id) => id !== activeId);
         if (next.schedule[sourceContainer].length === 0) delete next.schedule[sourceContainer];
       }
-      // Add to target
       if (targetContainer === 'unscheduled') {
         next.unscheduled.push(activeId);
         if (next.items[activeId]) next.items[activeId].dueDate = null;
@@ -377,7 +357,7 @@ export default function ClassPlannerApp() {
     setDraggingId(null);
   }, []);
 
-  // ── Loading screen ───────────────────────────────────────────
+  // ── Loading screen ─────────────────────────────────────────────
   if (!loaded || !state) {
     return (
       <div style={{ minHeight: '100vh', background: T.cream, fontFamily: FONT_BODY, color: T.muted }}
@@ -387,11 +367,11 @@ export default function ClassPlannerApp() {
     );
   }
 
-  // ════════════════════════════════════════════════════════════
-  // STATE MUTATION HELPERS (defined after early return)
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
+  // STATE MUTATION HELPERS
+  // ══════════════════════════════════════════════════════════════
 
-  /** Update state with undo snapshot. Pass skipUndo=true for non-undoable changes. */
+  /** Update state with undo snapshot. Pass skipUndo=true for bookkeeping changes. */
   const updateState = (fn, skipUndo) => {
     setState((s) => {
       if (!skipUndo) {
@@ -424,7 +404,7 @@ export default function ClassPlannerApp() {
   };
   redoRef.current = redo;
 
-  // ── Item creation ────────────────────────────────────────────
+  // ── Item creation ──────────────────────────────────────────────
 
   const addNoteOnDay = (date) => {
     const id = uid();
@@ -440,9 +420,9 @@ export default function ClassPlannerApp() {
 
   const addRecurringNotes = (title, daysCodes, html) => {
     const teachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
+    const dayMap = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
     const matching = teachingDays.filter((d) => {
       const dow = new Date(d + 'T12:00:00').getDay();
-      const dayMap = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
       return daysCodes.some((c) => dayMap[c] === dow);
     });
     if (matching.length === 0) { showToast('No matching days found', 'err'); return; }
@@ -484,7 +464,7 @@ export default function ClassPlannerApp() {
     }
   };
 
-  // ── Day management ───────────────────────────────────────────
+  // ── Day management ─────────────────────────────────────────────
 
   const addExtraDay = (date) => {
     updateState((s) => {
@@ -505,8 +485,6 @@ export default function ClassPlannerApp() {
       return s;
     });
   };
-
-  // ── Reorder, duplicate, holidays, modules ────────────────────
 
   const reorderOnDay = (date, fromIdx, toIdx) => {
     updateState((s) => {
@@ -568,7 +546,7 @@ export default function ClassPlannerApp() {
     });
   };
 
-  // ── Bulk date shift ──────────────────────────────────────────
+  // ── Bulk date shift ────────────────────────────────────────────
 
   const bulkShift = (days, skipHolidays) => {
     updateState((s) => {
@@ -577,7 +555,6 @@ export default function ClassPlannerApp() {
         if (s.setup.startDate) s.setup.startDate = addDays(s.setup.startDate, days);
         if (s.setup.endDate) s.setup.endDate = addDays(s.setup.endDate, days);
         s.extraDays = s.extraDays.map((d) => addDays(d, days));
-
         const remap = (obj) => {
           const out = {};
           Object.keys(obj).forEach((d) => { out[addDays(d, days)] = obj[d]; });
@@ -586,45 +563,30 @@ export default function ClassPlannerApp() {
         s.schedule = remap(s.schedule);
         if (s.holidays) s.holidays = remap(s.holidays);
         if (s.modules) s.modules = remap(s.modules);
-
         Object.values(s.items).forEach((item) => {
           if (item.dueDate) item.dueDate = addDays(item.dueDate, days);
         });
       } else {
-        // Holiday-aware shift: move items to the Nth non-holiday teaching day
+        // Holiday-aware shift: items land on the Nth non-holiday teaching day
         const allDaysArr = computeAllDays(s.setup, s.extraDays);
         const holidaySet = new Set(Object.keys(s.holidays || {}));
-
-        // Build ordered list of eligible (non-holiday) days
         const eligible = allDaysArr.filter((d) => !holidaySet.has(d));
-
         const shiftDate = (date) => {
           const idx = eligible.indexOf(date);
-          if (idx === -1) {
-            // Date not in eligible list; fall back to calendar-day shift
-            return addDays(date, days);
-          }
+          if (idx === -1) return addDays(date, days);
           const target = idx + days;
           if (target < 0) return eligible[0];
           if (target >= eligible.length) return eligible[eligible.length - 1];
           return eligible[target];
         };
-
-        // Remap schedule dates — holidays and semester bounds stay fixed
         const newSchedule = {};
-        Object.keys(s.schedule).forEach((d) => {
-          newSchedule[shiftDate(d)] = s.schedule[d];
-        });
+        Object.keys(s.schedule).forEach((d) => { newSchedule[shiftDate(d)] = s.schedule[d]; });
         s.schedule = newSchedule;
-
         if (s.modules) {
           const newModules = {};
-          Object.keys(s.modules).forEach((d) => {
-            newModules[shiftDate(d)] = s.modules[d];
-          });
+          Object.keys(s.modules).forEach((d) => { newModules[shiftDate(d)] = s.modules[d]; });
           s.modules = newModules;
         }
-
         Object.values(s.items).forEach((item) => {
           if (item.dueDate) item.dueDate = shiftDate(item.dueDate);
         });
@@ -636,7 +598,7 @@ export default function ClassPlannerApp() {
     setShowShiftModal(false);
   };
 
-  // ── iCal export ──────────────────────────────────────────────
+  // ── Export / import ────────────────────────────────────────────
 
   const exportICal = () => {
     const ics = generateICal(state);
@@ -649,8 +611,6 @@ export default function ClassPlannerApp() {
     URL.revokeObjectURL(url);
     showToast('Calendar file downloaded');
   };
-
-  // ── Semester template export/import ─────────────────────────
 
   const exportSemesterTemplate = () => {
     if (!state.setup.startDate || !state.setup.endDate) {
@@ -684,14 +644,11 @@ export default function ClassPlannerApp() {
         const result = importTemplate(template, state.setup);
         const newTeachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
         const mapped = Math.min(template.totalTeachingDays, newTeachingDays.length);
-
         if (template.totalTeachingDays > newTeachingDays.length) {
           showToast(`Template has ${template.totalTeachingDays} days but new semester has ${newTeachingDays.length} — some items may be lost`, 'err');
         }
-
         updateState((s) => {
           s.items = { ...s.items, ...result.items };
-          // Merge into existing schedule
           Object.entries(result.schedule).forEach(([date, ids]) => {
             s.schedule[date] = [...(s.schedule[date] || []), ...ids];
           });
@@ -709,8 +666,6 @@ export default function ClassPlannerApp() {
     reader.readAsText(file);
   };
 
-  // ── Import schedule from iCal/CSV ───────────────────────────
-
   const importSchedule = (events) => {
     if (!events || events.length === 0) {
       showToast('No events found in file', 'err');
@@ -720,12 +675,10 @@ export default function ClassPlannerApp() {
       generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays)
     );
     const currentAllDays = new Set(allDays);
-
     updateState((s) => {
       for (const ev of events) {
         const id = uid();
         const isAssign = /\b(assignment|quiz|exam|midterm|final|homework|hw\d*|project|lab)\b/i.test(ev.title);
-
         if (isAssign) {
           s.items[id] = { id, type: 'assign', title: ev.title };
         } else {
@@ -734,10 +687,8 @@ export default function ClassPlannerApp() {
             : `<p>${ev.title}</p>`;
           s.items[id] = { id, type: 'rich', html };
         }
-
         s.schedule[ev.date] = s.schedule[ev.date] || [];
         s.schedule[ev.date].push(id);
-
         if (!teachingDays.has(ev.date) && !currentAllDays.has(ev.date)) {
           s.extraDays = s.extraDays || [];
           if (!s.extraDays.includes(ev.date)) {
@@ -751,7 +702,7 @@ export default function ClassPlannerApp() {
     showToast(`Imported ${events.length} event${events.length !== 1 ? 's' : ''}`);
   };
 
-  // ── Course switching ─────────────────────────────────────────
+  // ── Course switching ───────────────────────────────────────────
 
   const switchCourse = async (newCourseId) => {
     if (state) Store.save(state);
@@ -769,7 +720,7 @@ export default function ClassPlannerApp() {
     }
   };
 
-  // ── Item edits ───────────────────────────────────────────────
+  // ── Item edits ─────────────────────────────────────────────────
 
   const deleteItem = (id) => {
     updateState((s) => {
@@ -789,7 +740,7 @@ export default function ClassPlannerApp() {
       s.items[id] = { ...s.items[id], ...patch };
       return s;
     });
-    // Sync title renames to Canvas in the background
+    // Sync title renames to Canvas
     const item = state.items[id];
     if (patch.title && item?.canvasId && state.canvas.connected && state.canvas.courseId) {
       CanvasAPI.renameAssignment(
@@ -798,7 +749,7 @@ export default function ClassPlannerApp() {
     }
   };
 
-  // ── Move item between days ───────────────────────────────────
+  // ── Move item between days ─────────────────────────────────────
 
   const moveItem = async (id, toDate, position) => {
     let canvasError = null;
@@ -806,13 +757,11 @@ export default function ClassPlannerApp() {
     const willAutoAddDay = toDate && !allDaysSet.has(toDate);
 
     updateState((s) => {
-      // Remove from current location
       s.unscheduled = s.unscheduled.filter((x) => x !== id);
       Object.keys(s.schedule).forEach((d) => {
         s.schedule[d] = s.schedule[d].filter((x) => x !== id);
         if (s.schedule[d].length === 0) delete s.schedule[d];
       });
-      // Place at new location
       if (toDate === null) {
         s.unscheduled.unshift(id);
       } else {
@@ -828,7 +777,6 @@ export default function ClassPlannerApp() {
       return s;
     });
 
-    // Sync due date to Canvas if applicable
     const item = state.items[id];
     if (toDate && item?.type === 'assign' && item.canvasId &&
         state.canvas.connected && state.canvas.token && state.canvas.baseUrl && state.canvas.courseId) {
@@ -842,9 +790,8 @@ export default function ClassPlannerApp() {
     else if (canvasError) showToast(`Canvas sync failed: ${canvasError}`, 'err');
   };
 
-  // ── Publish to Canvas ────────────────────────────────────────
+  // ── Publish to Canvas ──────────────────────────────────────────
 
-  /** Inner publish: performs the actual upload without conflict checking. */
   const doPublish = async () => {
     const s = stateRef.current;
     setPublishing(true);
@@ -878,7 +825,6 @@ export default function ClassPlannerApp() {
     }
   };
 
-  /** Outer publish: checks for conflicts first, then delegates to doPublish. */
   const publishToCanvas = async () => {
     const s = stateRef.current;
     if (!s?.canvas?.connected || !s.canvas.courseId) {
@@ -887,10 +833,8 @@ export default function ClassPlannerApp() {
     }
     setPublishing(true);
     try {
-      // Conflict detection: check if another instructor published since our last load
       const remote = await CanvasAPI.downloadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId).catch(() => null);
       if (remote?.publishedAt && s.loadedAt && remote.publishedAt > s.loadedAt) {
-        // Show conflict resolution modal instead of blocking confirm dialog
         setConflictData({ local: s, remote });
         setPublishing(false);
         return;
@@ -903,7 +847,7 @@ export default function ClassPlannerApp() {
     await doPublish();
   };
 
-  // ── Conflict resolution handlers ──────────────────────────────
+  // ── Conflict resolution ────────────────────────────────────────
 
   const handleConflictOverwrite = () => {
     setConflictData(null);
@@ -914,7 +858,6 @@ export default function ClassPlannerApp() {
     const remote = conflictData?.remote;
     setConflictData(null);
     if (!remote) return;
-    // Merge remote schedule data into current state, preserving canvas connection
     updateState((s) => {
       if (remote.setup) s.setup = remote.setup;
       if (remote.items) s.items = remote.items;
@@ -934,23 +877,20 @@ export default function ClassPlannerApp() {
     showToast('Publish cancelled', 'err');
   };
 
-  /** Copy the published Canvas page URL to clipboard, or prompt to publish first. */
   const copyShareLink = async () => {
-    const url = lastPublishedUrl;
-    if (!url) {
+    if (!lastPublishedUrl) {
       showToast('Publish the schedule to Canvas first to get a shareable link', 'err');
       return;
     }
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(lastPublishedUrl);
       showToast('Link copied — share with TAs and students');
     } catch {
-      // Fallback for older browsers or permission issues
       showToast('Could not copy — try copying from the address bar', 'err');
     }
   };
 
-  // ── Canvas connect / sync / refresh ──────────────────────────
+  // ── Canvas connect / sync / refresh ────────────────────────────
 
   const connectCanvas = async (baseUrl, token) => {
     try {
@@ -978,10 +918,7 @@ export default function ClassPlannerApp() {
     }
   };
 
-  /**
-   * Light sync — merge new Canvas assignments into state without clearing.
-   * Triggered by window focus when pending assignment creations exist.
-   */
+  /** Light sync — merge new Canvas assignments (triggered by window focus). */
   const syncFromCanvas = async () => {
     const s0 = stateRef.current;
     if (!s0?.canvas?.connected || !s0.canvas.courseId) return;
@@ -990,7 +927,6 @@ export default function ClassPlannerApp() {
       list = await CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
     } catch { return; }
 
-    // Match new Canvas assignments to pending creations (FIFO)
     const pending = [...(s0.pendingCreations || [])].sort((a, b) => a.time - b.time);
     const claimedPending = new Set();
     const patchPromises = [];
@@ -998,9 +934,7 @@ export default function ClassPlannerApp() {
     updateState((s) => {
       let added = 0;
       const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
-
       list.forEach((a) => {
-        // Skip assignments we already have
         const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
         if (existing) {
           existing.title = a.name;
@@ -1009,11 +943,8 @@ export default function ClassPlannerApp() {
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           return;
         }
-
         const id = uid();
         let due = a.due_at ? localDateStr(a.due_at) : null;
-
-        // If no due date, try to claim a pending creation and assign its date
         if (!due) {
           const pendingMatch = pending.find((p) => !claimedPending.has(p.id));
           if (pendingMatch) {
@@ -1028,7 +959,6 @@ export default function ClassPlannerApp() {
           const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
           if (match) claimedPending.add(match.id);
         }
-
         s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
@@ -1039,20 +969,15 @@ export default function ClassPlannerApp() {
         }
         added++;
       });
-
       s.pendingCreations = (s.pendingCreations || []).filter((p) => !claimedPending.has(p.id));
       if (added) showToast(`Added ${added} new assignment${added > 1 ? 's' : ''}`);
       return s;
     });
-
     await Promise.all(patchPromises);
   };
   syncRef.current = syncFromCanvas;
 
-  /**
-   * Full reload — download published schedule from Canvas files,
-   * then merge current Canvas assignments on top.
-   */
+  /** Full reload — download published schedule, then merge current Canvas assignments. */
   const refreshFromCanvas = async () => {
     const s0 = stateRef.current;
     if (!s0?.canvas?.connected || !s0.canvas.courseId) {
@@ -1077,7 +1002,6 @@ export default function ClassPlannerApp() {
       if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); setRefreshing(false); return; }
     }
 
-    // Build assignment groups map with cycling colors
     const groupsMap = {};
     (Array.isArray(groups) ? groups : []).forEach((g, i) => {
       groupsMap[g.id] = { id: g.id, name: g.name, color: GROUP_COLORS[i % GROUP_COLORS.length] };
@@ -1085,7 +1009,6 @@ export default function ClassPlannerApp() {
 
     updateState((s) => {
       s.canvas.assignmentGroups = groupsMap;
-      // Start from published schedule if available
       if (published) {
         s.setup = published.setup || s.setup;
         s.items = published.items || {};
@@ -1106,7 +1029,6 @@ export default function ClassPlannerApp() {
       const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
       let added = 0, updated = 0, autoAdded = 0;
 
-      // Merge Canvas assignments on top of the published schedule
       list.forEach((a) => {
         const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
         if (existing) {
@@ -1114,7 +1036,6 @@ export default function ClassPlannerApp() {
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
-          // Relocate if Canvas due date changed since last sync
           const newDue = a.due_at ? localDateStr(a.due_at) : null;
           if (newDue && newDue !== existing.dueDate) {
             if (existing.dueDate && s.schedule[existing.dueDate]) {
@@ -1129,8 +1050,6 @@ export default function ClassPlannerApp() {
           updated++;
           return;
         }
-
-        // Brand-new assignment from Canvas
         const id = uid();
         const due = a.due_at ? localDateStr(a.due_at) : null;
         s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null };
@@ -1156,13 +1075,11 @@ export default function ClassPlannerApp() {
     setRefreshing(false);
   };
 
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
   // RENDER
-  // ════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════
 
   const isStudent = state.studentView;
-
-  // Active drag item for overlay
   const activeDragItem = draggingId ? state.items[draggingId] : null;
 
   return (
@@ -1174,197 +1091,10 @@ export default function ClassPlannerApp() {
       onDragCancel={handleDragCancel}
     >
     <div style={{ minHeight: '100vh', background: T.cream, color: T.ink, fontFamily: FONT_BODY }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        .planner-card a { color: ${T.inkBlue}; text-decoration: underline; text-underline-offset: 2px; }
-        .planner-rich p { margin: 0 0 0.4rem 0; }
-        .planner-rich p:last-child { margin-bottom: 0; }
-        .planner-rich ul, .planner-rich ol { margin: 0.2rem 0 0.4rem 1.2rem; }
-        .planner-rich [contenteditable="true"]:focus { outline: 2px solid ${T.inkBlue}; outline-offset: 2px; border-radius: 3px; }
-        .drop-target-active { background: ${T.inkBlueSoft} !important; }
-        .item-dragging { opacity: 0.4; }
-
-        /* Responsive layouts */
-        .planner-shell { padding: 16px; }
-        .planner-main { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
-        @media (min-width: 640px)  { .planner-shell { padding: 24px; } }
-        @media (min-width: 1024px) { .planner-main.with-sidebar { grid-template-columns: 1fr 280px; } }
-
-        .day-row { display: grid; grid-template-columns: 92px 1fr; }
-        @media (min-width: 640px) { .day-row { grid-template-columns: 170px 1fr; } }
-
-        .date-col { padding: 10px 10px 12px; border-right: 1px solid ${T.border}; position: relative; }
-        @media (min-width: 640px) { .date-col { padding: 14px 16px; } }
-
-        .date-num { font-family: ${FONT_DISPLAY}; font-weight: 500; color: ${T.ink}; letter-spacing: -0.01em; line-height: 1.1; font-size: 16px; }
-        @media (min-width: 640px) { .date-num { font-size: 20px; } }
-
-        .date-day { font-family: ${FONT_MONO}; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: ${T.muted}; margin-top: 2px; }
-        @media (min-width: 640px) { .date-day { font-size: 10px; } }
-
-        .planner-title { font-family: ${FONT_DISPLAY}; font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; font-size: 22px; }
-        @media (min-width: 640px) { .planner-title { font-size: 32px; } }
-
-        .planner-header { padding: 14px 16px; }
-        @media (min-width: 640px) { .planner-header { padding: 20px 24px; } }
-
-        .planner-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-
-        .col-header { padding: 10px 12px; font-family: ${FONT_MONO}; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${T.muted}; }
-        @media (min-width: 640px) { .col-header { padding: 10px 16px; font-size: 10px; letter-spacing: 0.2em; } }
-
-        .day-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-
-        .holiday-row { position: relative; }
-        .holiday-row::after {
-          content: '';
-          position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-          background: repeating-linear-gradient(135deg, transparent, transparent 8px, rgba(128,128,128,0.06) 8px, rgba(128,128,128,0.06) 16px);
-          pointer-events: none;
-        }
-
-        .module-header {
-          padding: 10px 16px;
-          font-family: ${FONT_DISPLAY}; font-size: 16px; font-weight: 600; color: ${T.ink};
-          background: ${T.subtle}; border-bottom: 1px solid ${T.border};
-          display: flex; align-items: center; justify-content: space-between;
-        }
-
-        /* Accessibility */
-        button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible {
-          outline: 2px solid ${T.focusRing}; outline-offset: 2px; border-radius: 2px;
-        }
-        .skip-link {
-          position: absolute; top: -40px; left: 0;
-          background: ${T.inkBlue}; color: #fff;
-          padding: 8px 16px; z-index: 100;
-          font-family: ${FONT_BODY}; font-size: 14px;
-          text-decoration: none; border-radius: 0 0 4px 0;
-        }
-        .skip-link:focus { top: 0; }
-        .kb-move-btn {
-          display: inline-flex; align-items: center; justify-content: center;
-          width: 24px; height: 24px; padding: 0;
-          background: ${T.paper}; border: 1px solid ${T.border};
-          border-radius: 2px; cursor: pointer; color: ${T.muted};
-        }
-        .kb-move-btn:hover { background: ${T.subtle}; }
-
-        @media (prefers-reduced-motion: reduce) {
-          *, *::before, *::after {
-            transition-duration: 0.01ms !important;
-            animation-duration: 0.01ms !important;
-          }
-        }
-
-        @media print {
-          @page { margin: 0.5in 0.4in; }
-
-          /* Global resets */
-          * { color: #000 !important; background: white !important; }
-          body { background: white !important; color: #000 !important; font-size: 11pt; }
-
-          /* Hide non-content UI */
-          .planner-header-row nav,
-          .planner-header-row button,
-          footer, aside,
-          .skip-link { display: none !important; }
-          .day-tools { display: none !important; }
-          [title="Drag to move"], .kb-move-btn { display: none !important; }
-          .planner-card .flex.flex-col { display: none !important; }
-          [role="status"][aria-live="polite"] { display: none !important; }
-          [role="dialog"] { display: none !important; }
-          .module-header button { display: none !important; }
-
-          /* Keep course title and date range visible */
-          header[role="banner"] {
-            border-bottom: 2px solid #000 !important;
-            padding: 0 0 8px 0 !important;
-            margin-bottom: 8px !important;
-          }
-          .planner-header { padding: 0 !important; }
-          .planner-header-row { display: block !important; }
-          .planner-title {
-            font-size: 16pt !important;
-            color: #000 !important;
-            margin: 0 0 2px 0 !important;
-          }
-
-          /* Full-width layout (no sidebar grid) */
-          .planner-shell { padding: 0 !important; max-width: 100% !important; }
-          .planner-main { display: block !important; max-width: 100% !important; }
-          .planner-main > section { width: 100% !important; }
-
-          /* Schedule table */
-          .planner-main > section > div {
-            border: 1px solid #000 !important;
-            border-radius: 0 !important;
-            overflow: visible !important;
-          }
-
-          /* Row and card page-break handling */
-          .day-row {
-            break-inside: avoid;
-            page-break-inside: avoid;
-            border-bottom: 1px solid #999 !important;
-            background: white !important;
-          }
-          .planner-card {
-            break-inside: avoid;
-            page-break-inside: avoid;
-            box-shadow: none !important;
-            border: 1px solid #000 !important;
-            border-left: 1px solid #000 !important;
-            border-radius: 0 !important;
-            background: white !important;
-            padding: 6px 8px !important;
-            margin-bottom: 4px !important;
-            cursor: default !important;
-          }
-          .module-header {
-            break-inside: avoid;
-            page-break-inside: avoid;
-            border-bottom: 2px solid #000 !important;
-            font-size: 12pt !important;
-            padding: 6px 8px !important;
-          }
-
-          /* Column headers */
-          .col-header {
-            background: #eee !important;
-            color: #000 !important;
-            border-bottom: 1px solid #000 !important;
-            padding: 4px 8px !important;
-          }
-
-          /* Date column */
-          .date-col {
-            border-right: 1px solid #999 !important;
-            padding: 6px 8px !important;
-          }
-          .date-num { color: #000 !important; font-size: 12pt !important; }
-          .date-day { color: #333 !important; }
-
-          /* Content column: tighter spacing */
-          .day-row > div:last-child { padding: 6px 8px !important; }
-
-          /* Card content readability */
-          .planner-card a { color: #000 !important; text-decoration: underline !important; }
-          .planner-rich { overflow: visible !important; max-height: none !important; }
-          .planner-rich * { overflow: visible !important; }
-          .item-dragging { opacity: 1 !important; }
-
-          /* Holiday rows: remove diagonal stripes */
-          .holiday-row::after { display: none !important; }
-
-          /* Drop target highlights off */
-          .drop-target-active { background: white !important; }
-        }
-      `}</style>
+      <style>{appStyles()}</style>
 
       <a href="#schedule-content" className="skip-link">Skip to schedule</a>
 
-      {/* ── Header ── */}
       <Header
         state={state} isStudent={isStudent} hashStudent={hashStudent}
         allDays={allDays} filteredDays={filteredDays}
@@ -1396,12 +1126,10 @@ export default function ClassPlannerApp() {
         />
       )}
 
-      {/* Publish success banner */}
       {studentEmbed && !isStudent && (
         <PublishBanner url={studentEmbed} onDismiss={() => setStudentEmbed(null)} />
       )}
 
-      {/* Activity log */}
       {!isStudent && showActivityLog && (
         <ActivityLog publishHistory={state.publishHistory} onClose={() => setShowActivityLog(false)} />
       )}
@@ -1414,16 +1142,13 @@ export default function ClassPlannerApp() {
           onClose={() => setShowSetup(false)} />
       )}
 
-      {/* ── Main schedule grid ── */}
+      {/* Main schedule grid */}
       <main id="schedule-content" role="main" aria-label="Course schedule"
             className={`planner-shell planner-main ${!isStudent ? 'with-sidebar' : ''}`}
             style={{ maxWidth: 1152, margin: '0 auto' }}>
         <section style={{ minWidth: 0 }}>
           {allDays.length === 0 ? (
-            <EmptyState
-              onSetup={() => setShowSetup(true)}
-              isConnected={state.canvas.connected}
-            />
+            <EmptyState onSetup={() => setShowSetup(true)} isConnected={state.canvas.connected} />
           ) : (
             <ScheduleTable
               allDays={filteredDays} state={state} isStudent={isStudent}
@@ -1488,461 +1213,4 @@ export default function ClassPlannerApp() {
     </DragOverlay>
     </DndContext>
   );
-}
-
-// ════════════════════════════════════════════════════════════════
-// SUB-COMPONENTS (internal to App — not worth separate files)
-// ════════════════════════════════════════════════════════════════
-
-/** App header with title, metadata, search bar, and toolbar buttons. */
-function Header({
-  state, isStudent, hashStudent, allDays, filteredDays,
-  searchQuery, onSearchChange,
-  filterGroup, onFilterGroupChange, assignmentGroups,
-  darkMode, undoStack, redoStack,
-  onToggleDark, onToggleStudent, onUndo, onRedo, onExportICal,
-  onShowShiftModal, onShowRecurringModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleSetup,
-  onToggleActivityLog,
-}) {
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchInputRef = useRef(null);
-  const isFiltering = searchQuery.trim().length > 0 || filterGroup !== null;
-  const groupList = Object.values(assignmentGroups || {});
-  const hasGroups = groupList.length > 0;
-
-  const toggleSearch = () => {
-    if (searchOpen) {
-      onSearchChange('');
-      setSearchOpen(false);
-    } else {
-      setSearchOpen(true);
-      setTimeout(() => searchInputRef.current?.focus(), 0);
-    }
-  };
-
-  return (
-    <header role="banner" style={{ borderBottom: `1px solid ${T.border}`, background: T.paper }}>
-      <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
-        <div className="planner-header-row">
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <h1 className="planner-title" style={{ fontSize: '18px', margin: 0 }}>
-              {state.setup.courseTitle || 'Course Schedule'}
-            </h1>
-            <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.18em', color: T.muted, textTransform: 'uppercase', marginTop: 4 }}>
-              {isFiltering
-                ? `Showing ${filteredDays.length} of ${allDays.length} days`
-                : `${allDays.length} meetings`}
-            </div>
-            {state.setup.startDate && state.setup.endDate && (
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
-                {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)}
-              </div>
-            )}
-            {state.setup.classDays?.length > 0 && (
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
-                {state.setup.classDays.map((c) => DAY_FULL[c]).join(', ')}
-              </div>
-            )}
-            {!isStudent && (
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
-                Build {new Date(__BUILD_TIME__).toLocaleString()}
-                {state.lastSaved && <> · Saved {new Date(state.lastSaved).toLocaleString()}</>}
-              </div>
-            )}
-          </div>
-
-          {/* ── Search bar (collapsible) ── */}
-          {searchOpen && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, maxWidth: 220 }}>
-              <div style={{ position: 'relative', flex: 1 }}>
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Escape') toggleSearch(); }}
-                  placeholder="Filter schedule..."
-                  aria-label="Search schedule"
-                  style={{
-                    ...inputStyle(),
-                    width: '100%',
-                    padding: '5px 28px 5px 8px',
-                    fontSize: '12px',
-                  }}
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => { onSearchChange(''); searchInputRef.current?.focus(); }}
-                    aria-label="Clear search"
-                    style={{
-                      position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
-                      background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: T.muted, padding: 2, display: 'flex', alignItems: 'center',
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <nav aria-label="Schedule tools" className="flex items-center gap-2 flex-wrap">
-            <IconButton onClick={toggleSearch} aria-label={searchOpen ? 'Close search' : 'Search schedule'}>
-              <Search size={16} color={isFiltering ? T.inkBlue : T.ink} />
-            </IconButton>
-            {hasGroups && (
-              <select
-                value={filterGroup ?? ''}
-                onChange={(e) => onFilterGroupChange(e.target.value ? Number(e.target.value) : null)}
-                aria-label="Filter by assignment group"
-                style={{
-                  ...inputStyle(),
-                  fontSize: '11px',
-                  padding: '4px 6px',
-                  maxWidth: 150,
-                  fontFamily: FONT_MONO,
-                  color: filterGroup !== null ? T.inkBlue : T.muted,
-                }}
-              >
-                <option value="">All groups</option>
-                {groupList.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            )}
-            {!hashStudent && (
-              <ToggleButton active={isStudent} onClick={onToggleStudent}
-                aria-label={isStudent ? 'Switch to editor view' : 'Switch to student view'}>
-                {isStudent ? <Eye size={14} /> : <EyeOff size={14} />}
-                {isStudent ? 'Student' : 'Editor'}
-              </ToggleButton>
-            )}
-            <IconButton onClick={onToggleDark} aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
-              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
-            </IconButton>
-            <IconButton onClick={onExportICal} aria-label="Download iCal calendar file">
-              <CalendarDays size={16} />
-            </IconButton>
-            <IconButton onClick={() => window.print()} aria-label="Print schedule">
-              <Printer size={16} />
-            </IconButton>
-            {!isStudent && (
-              <>
-                <IconButton onClick={onUndo} aria-label="Undo last action" disabled={undoStack.length === 0}>
-                  <Undo2 size={16} color={undoStack.length === 0 ? T.faint : T.ink} />
-                </IconButton>
-                <IconButton onClick={onRedo} aria-label="Redo last action" disabled={redoStack.length === 0}>
-                  <Redo2 size={16} color={redoStack.length === 0 ? T.faint : T.ink} />
-                </IconButton>
-                <IconButton onClick={onShowShiftModal} aria-label="Shift all dates forward or backward">
-                  <ChevronRight size={16} />
-                </IconButton>
-                <IconButton onClick={onShowRecurringModal} aria-label="Create recurring note">
-                  <Repeat size={16} />
-                </IconButton>
-                {state.canvas.connected && state.canvas.courseId && (<>
-                  <IconButton onClick={onPublish} aria-label="Publish schedule to Canvas" disabled={publishing}>
-                    {publishing ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
-                  </IconButton>
-                  <IconButton onClick={onShareLink} aria-label={lastPublishedUrl ? 'Copy shareable link' : 'Publish first to get a shareable link'}>
-                    <Link2 size={16} color={lastPublishedUrl ? T.inkBlue : T.muted} />
-                  </IconButton>
-                </>)}
-                <IconButton onClick={onToggleActivityLog} aria-label="Toggle publish history">
-                  <History size={16} />
-                </IconButton>
-                <IconButton onClick={onToggleSetup} aria-label="Course setup">
-                  <Settings size={16} color={state.canvas.connected ? T.forest : T.ink} />
-                </IconButton>
-              </>
-            )}
-          </nav>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-/** Banner shown after a successful publish to Canvas, with copy-link sharing. */
-function PublishBanner({ url, onDismiss }) {
-  const [copied, setCopied] = useState(false);
-  const copyUrl = async () => { try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
-  return (
-    <div style={{ background: T.successBg, borderBottom: `1px solid ${T.successBorder}`, padding: '12px 24px' }}>
-      <div style={{ maxWidth: 1152, margin: '0 auto' }}>
-        <div className="flex items-center justify-between mb-2">
-          <span style={{ fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 600, color: T.forest }}>
-            <Check size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />Published to Canvas
-          </span>
-          <IconButton onClick={onDismiss} aria-label="Dismiss publish notification"><X size={14} /></IconButton>
-        </div>
-        <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 8 }}>
-          Schedule published as a Canvas Page. Share this link with TAs and students. Re-publish after changes.
-        </p>
-        <div className="flex items-center gap-3 flex-wrap">
-          <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontFamily: FONT_MONO, fontSize: '12px', color: T.inkBlue, wordBreak: 'break-all' }}>{url}</a>
-          <button onClick={copyUrl} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 3, fontFamily: FONT_MONO, fontSize: '11px', border: `1px solid ${copied ? T.successBorder : T.border}`, background: copied ? T.successBg : T.paper, color: copied ? T.forest : T.ink, cursor: 'pointer', whiteSpace: 'nowrap' }}>{copied ? <><Check size={12} /> Copied</> : <><Link2 size={12} /> Copy link</>}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Collapsible activity log showing recent publish events. */
-function ActivityLog({ publishHistory, onClose }) {
-  const entries = (publishHistory || []).slice().reverse();
-  return (
-    <div style={{ background: T.subtle, borderBottom: `1px solid ${T.border}`, padding: '12px 24px' }}>
-      <div style={{ maxWidth: 1152, margin: '0 auto' }}>
-        <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
-          <span style={{ fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 600, color: T.ink, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Publish History
-          </span>
-          <IconButton onClick={onClose} aria-label="Close activity log"><X size={14} /></IconButton>
-        </div>
-        {entries.length === 0 ? (
-          <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted }}>No publish history</p>
-        ) : (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {entries.map((e, i) => (
-              <li key={i} style={{
-                fontFamily: FONT_MONO, fontSize: '11px', color: T.ink,
-                padding: '4px 0', borderBottom: i < entries.length - 1 ? `1px solid ${T.border}` : 'none',
-                display: 'flex', gap: 12, alignItems: 'baseline',
-              }}>
-                <span style={{ color: T.muted, minWidth: 150 }}>
-                  {new Date(e.timestamp).toLocaleString()}
-                </span>
-                <span>{e.itemCount} item{e.itemCount !== 1 ? 's' : ''}</span>
-                <span style={{ color: T.muted }}>&middot;</span>
-                <span>{e.dayCount} day{e.dayCount !== 1 ? 's' : ''}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** The schedule grid table — column headers + day rows with module headers. */
-function ScheduleTable({
-  allDays, state, isStudent, teachingSet, pendingByDate,
-  draggingId, autoEditId, clearAutoEdit,
-  onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
-  onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
-  onToggleHoliday, onAddModule, onRemoveModule,
-  allDaysSet, assignmentGroups,
-}) {
-  const iconBtnStyleVal = { color: T.muted, padding: 2, background: 'transparent', border: 'none', cursor: 'pointer' };
-  let prevKey = null;
-
-  // Compute how many teaching days each module spans.
-  // A module spans from its start date to the day before the next module starts (or end of semester).
-  const moduleDates = Object.keys(state.modules || {}).filter((d) => allDays.includes(d)).sort();
-  const moduleDayCounts = {};
-  moduleDates.forEach((mDate, mi) => {
-    const startIdx = allDays.indexOf(mDate);
-    const endIdx = mi < moduleDates.length - 1 ? allDays.indexOf(moduleDates[mi + 1]) : allDays.length;
-    let count = 0;
-    for (let i = startIdx; i < endIdx; i++) {
-      if (!state.holidays?.[allDays[i]]) count++;
-    }
-    moduleDayCounts[mDate] = count;
-  });
-
-  return (
-    <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 6, overflow: 'hidden' }}>
-      <div className="day-row" style={{ background: T.subtle, borderBottom: `1px solid ${T.border}` }}>
-        <div className="col-header" style={{ borderRight: `1px solid ${T.border}` }}>Class meeting</div>
-        <div className="col-header">Readings · Assignments · Materials</div>
-      </div>
-      {allDays.map((d, idx) => {
-        const isExtra = !teachingSet.has(d);
-        const items = (state.schedule[d] || []).map((id) => state.items[id]).filter(Boolean);
-        const k = weekKey(d);
-        const weekIdx = weekNumber(d);
-        const isWeekStart = idx > 0 && k !== prevKey;
-        prevKey = k;
-        const moduleTitle = state.modules?.[d];
-        const holidayLabel = state.holidays?.[d];
-
-        return (
-          <React.Fragment key={d}>
-            {moduleTitle && (
-              <div className="module-header">
-                <span>
-                  {moduleTitle}
-                  {moduleDayCounts[d] != null && (
-                    <span style={{
-                      fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 400,
-                      color: T.muted, marginLeft: 10, letterSpacing: '0.02em',
-                    }}>
-                      ({moduleDayCounts[d]} {moduleDayCounts[d] === 1 ? 'day' : 'days'})
-                    </span>
-                  )}
-                </span>
-                {!isStudent && (
-                  <button onClick={() => onRemoveModule(d)} style={iconBtnStyleVal} title="Remove module header">
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-            )}
-            <ClassDayRow
-              date={d} index={idx} isExtra={isExtra}
-              weekIdx={weekIdx} isWeekStart={isWeekStart}
-              items={items} isStudent={isStudent}
-              canvas={state.canvas}
-              canvasReady={state.canvas.connected && !!state.canvas.courseId}
-              pendingCount={pendingByDate[d] || 0}
-              holidayLabel={holidayLabel}
-              onMoveItem={onMoveItem} onUpdateItem={onUpdateItem} onDeleteItem={onDeleteItem}
-              onDuplicate={(id) => onDuplicate(id, d)}
-              onAddNote={() => onAddNote(d)}
-              onAddAssignment={() => onAddAssignment(d)}
-              onAddExtraDay={onAddExtraDay}
-              onRemoveExtraDay={() => onRemoveExtraDay(d)}
-              onToggleHoliday={() => onToggleHoliday(d)}
-              onAddModule={() => onAddModule(d)}
-              onReorder={(from, to) => onReorder(d, from, to)}
-              addableDates={getAddableDatesAfter(d, allDaysSet, state.setup.endDate)}
-              draggingId={draggingId}
-              autoEditId={autoEditId} clearAutoEdit={clearAutoEdit}
-              assignmentGroups={assignmentGroups}
-            />
-          </React.Fragment>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Schedule HTML renderer (for Canvas Page publish) ───────────
-// Uses CSS custom properties with light-theme fallbacks in every var() call.
-// The <style> block only defines dark-mode overrides via prefers-color-scheme.
-// If Canvas strips the <style> tag, the light theme still renders correctly
-// because every var(--x, fallback) falls back to the hardcoded light value.
-
-function renderScheduleHtml(s) {
-  const L = LIGHT;
-  const D = DARK;
-
-  // Helper: var(--name, lightFallback) — works even if <style> is stripped
-  const v = (name, light) => `var(--s-${name}, ${light})`;
-
-  // Dark-mode-only style block (light values come from inline fallbacks)
-  const darkStyleBlock = `
-    <style>
-      @media (prefers-color-scheme: dark) {
-        .schedule-wrap {
-          --s-paper: ${D.paper}; --s-subtle: ${D.subtle};
-          --s-ink: ${D.ink}; --s-ink-mid: ${D.inkMid}; --s-muted: ${D.muted};
-          --s-border: ${D.border}; --s-border-strong: ${D.borderStrong};
-          --s-ink-blue: ${D.inkBlue}; --s-ink-blue-soft: ${D.inkBlueSoft};
-          --s-sienna: ${D.sienna}; --s-ox: ${D.ox};
-          --s-amber-soft: ${D.amberSoft};
-          --s-week-shade: ${D.weekShade}; --s-holiday-bg: ${D.holidayBg};
-        }
-        .schedule-wrap a { color: ${D.inkBlue}; }
-      }
-    </style>`;
-
-  const days = computeAllDays(s.setup, s.extraDays);
-  const teaching = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
-  let prevWk = null;
-  let rows = '';
-
-  // Compute module day counts for published HTML
-  const pubModuleDates = Object.keys(s.modules || {}).filter((d) => days.includes(d)).sort();
-  const pubModuleDayCounts = {};
-  pubModuleDates.forEach((mDate, mi) => {
-    const startIdx = days.indexOf(mDate);
-    const endIdx = mi < pubModuleDates.length - 1 ? days.indexOf(pubModuleDates[mi + 1]) : days.length;
-    let count = 0;
-    for (let i = startIdx; i < endIdx; i++) {
-      if (!s.holidays?.[days[i]]) count++;
-    }
-    pubModuleDayCounts[mDate] = count;
-  });
-
-  days.forEach((d) => {
-    const dt = new Date(d + 'T00:00:00');
-    const dayName = dt.toLocaleDateString('en-US', { weekday: 'long' });
-    const dateNum = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const wk = weekKey(d);
-    const isNewWeek = wk !== prevWk;
-    prevWk = wk;
-    const isExtra = !teaching.has(d);
-    const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
-    const shadedWeek = weekNumber(d) % 2 === 1;
-    const holidayLabel = s.holidays?.[d];
-
-    // Background: use var() with light fallback for each case
-    let bgColor;
-    if (holidayLabel) bgColor = v('holiday-bg', L.holidayBg);
-    else if (isExtra) bgColor = v('amber-soft', L.amberSoft);
-    else if (shadedWeek) bgColor = v('week-shade', L.weekShade);
-    else bgColor = v('paper', L.paper);
-
-    // Module header row
-    const moduleTitle = s.modules?.[d];
-    if (moduleTitle) {
-      const dayCount = pubModuleDayCounts[d];
-      const dayCountHtml = dayCount != null ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 400; color: ${v('muted', L.muted)}; margin-left: 10px; letter-spacing: 0.02em;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>` : '';
-      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${v('ink', L.ink)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">${moduleTitle}${dayCountHtml}</td></tr>`;
-    }
-
-    if (isNewWeek) {
-      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${v('border-strong', L.borderStrong)};"></div></td></tr>`;
-    }
-
-    let content = '';
-    items.forEach((item) => {
-      if (item.type === 'assign') {
-        const titleHtml = item.htmlUrl
-          ? `<a href="${item.htmlUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
-          : (item.title || 'Untitled');
-        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
-          <div style="margin-bottom: 4px;">
-            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
-            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: ${v('muted', L.muted)}; margin-left: 6px;">${item.points} pts</span>` : ''}
-          </div>
-          <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${v('ink', L.ink)}; line-height: 1.3;">${titleHtml}</div>
-        </div>`;
-      } else if (item.type === 'rich') {
-        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('sienna', L.sienna)}; border-radius: 3px; padding: 10px 12px;">
-          <div style="font-size: 13px; color: ${v('ink', L.ink)}; line-height: 1.5;">${item.html || ''}</div>
-        </div>`;
-      }
-    });
-
-    if (holidayLabel) {
-      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: ${v('ox', L.ox)}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
-    } else if (!content) {
-      content = `<div style="padding: 4px 0;">&nbsp;</div>`;
-    }
-
-    const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
-    const rowOpacity = holidayLabel ? 'opacity: 0.7;' : '';
-    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${v('border', L.border)}; box-shadow: ${rowShadow}; ${rowOpacity}">
-      <td style="padding: 14px 16px; border-right: 1px solid ${v('border', L.border)}; vertical-align: top; width: 170px;">
-        <div style="font-family: Georgia, serif; font-weight: 500; color: ${v('ink', L.ink)}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
-        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('muted', L.muted)}; margin-top: 2px;">${dayName}</div>
-      </td>
-      <td style="padding: 14px 16px; vertical-align: top;">${content}</td>
-    </tr>`;
-  });
-
-  return `${darkStyleBlock}
-  <div class="schedule-wrap" style="max-width: 1152px; margin: 0 auto;">
-    <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
-      <thead><tr style="background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)};">Readings · Assignments · Materials</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>`;
 }
