@@ -57,13 +57,14 @@ export default function Header({
             )}
             {state.setup.startDate && state.setup.endDate && (
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
-                {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)}
+                <div>{fmtFull(state.setup.startDate)} –</div>
+                <div>{fmtFull(state.setup.endDate)}</div>
               </div>
             )}
             {!isStudent && (
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
-                Build {new Date(__BUILD_TIME__).toLocaleString()}
-                {state.lastSaved && <> · Saved {new Date(state.lastSaved).toLocaleString()}</>}
+                <div>Build {new Date(__BUILD_TIME__).toLocaleString()}</div>
+                {state.lastSaved && <div>Saved {new Date(state.lastSaved).toLocaleString()}</div>}
               </div>
             )}
           </div>
