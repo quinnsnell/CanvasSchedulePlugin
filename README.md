@@ -4,6 +4,8 @@ A course-schedule planner for [Canvas LMS](https://www.instructure.com/canvas) t
 
 Canvas's native calendar and syllabus pages don't offer a row-per-class-meeting layout with draggable content — the kind of spreadsheet-style course planner that many instructors relied on in other LMS tools. This app fills that gap.
 
+![Main schedule grid](docs/screenshots/MainScheduleGrid.png)
+
 ## Features
 
 ### Schedule grid
@@ -19,6 +21,8 @@ Canvas's native calendar and syllabus pages don't offer a row-per-class-meeting 
 - **Reorder** items within a day via drag or arrow buttons
 - **Recurring notes**: batch-create a note on every matching teaching day (e.g., "Weekly Quiz" on all Fridays)
 
+![Course setup panel](docs/screenshots/CourseSetupPanel.png)
+
 ### Canvas integration
 - Import all assignments from a Canvas course with one click
 - **"+ Assignment"** button opens Canvas's assignment editor; new assignment auto-appears on the correct day when you return
@@ -33,6 +37,11 @@ Canvas's native calendar and syllabus pages don't offer a row-per-class-meeting 
 - **Semester templates**: export a schedule mapped by teaching-day position (not absolute dates), then import into a new semester — items land on the correct week and day automatically
 
 ### Other
+
+| Student view | Dark mode |
+|---|---|
+| ![Student view](docs/screenshots/StudentView.png) | ![Dark mode](docs/screenshots/DarkMode.png) |
+
 - **Undo/redo** (Ctrl/Cmd+Z, up to 30 levels)
 - **Search and filter** by text or assignment group
 - **Dark mode** with automatic OS preference detection
