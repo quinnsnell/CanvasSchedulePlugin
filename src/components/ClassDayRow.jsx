@@ -116,6 +116,7 @@ export default function ClassDayRow({
         onDuplicate={onDuplicate} onReorder={onReorder}
         onAddNote={onAddNote} onAddAssignment={onAddAssignment}
         autoEditId={autoEditId} clearAutoEdit={clearAutoEdit}
+        assignmentGroups={assignmentGroups}
       />
     </div>
   );
@@ -144,6 +145,7 @@ function ContentColumn({
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
   onAddNote, onAddAssignment,
   autoEditId, clearAutoEdit,
+  assignmentGroups,
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `day:${date}`,

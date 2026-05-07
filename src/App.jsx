@@ -18,7 +18,6 @@ import {
   DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, closestCenter,
 } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
 import {
   X, Eye, EyeOff, Settings, RefreshCw,
   Cloud, CloudOff, Upload, Calendar, History, Link2, Check,
@@ -284,6 +283,99 @@ export default function ClassPlannerApp() {
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
+  }, []);
+
+  // ── dnd-kit: find which day (or 'unscheduled') an item lives on ──
+  const findItemContainer = useCallback((itemId) => {
+    const s = stateRef.current;
+    if (!s) return null;
+    if (s.unscheduled.includes(itemId)) return 'unscheduled';
+    for (const [date, ids] of Object.entries(s.schedule)) {
+      if (ids.includes(itemId)) return date;
+    }
+    return null;
+  }, []);
+
+  // ── dnd-kit event handlers ──────────────────────────────────
+  const handleDragStart = useCallback((event) => {
+    setDraggingId(event.active.id);
+  }, []);
+
+  const handleDragEnd = useCallback((event) => {
+    const { active, over } = event;
+    setDraggingId(null);
+
+    if (!over || !active) return;
+    const s = stateRef.current;
+    if (!s || s.studentView) return;
+
+    const activeId = active.id;
+    const overId = over.id;
+
+    const sourceContainer = findItemContainer(activeId);
+    if (sourceContainer === null) return;
+
+    let targetContainer = null;
+    if (over.data?.current?.type === 'day') {
+      targetContainer = over.data.current.date;
+    } else if (over.data?.current?.type === 'unscheduled' || overId === 'unscheduled') {
+      targetContainer = 'unscheduled';
+    } else if (typeof overId === 'string' && overId.startsWith('day:')) {
+      targetContainer = overId.slice(4);
+    } else {
+      targetContainer = findItemContainer(overId);
+    }
+
+    if (targetContainer === null) return;
+
+    if (sourceContainer === targetContainer && sourceContainer !== 'unscheduled') {
+      const arr = s.schedule[sourceContainer] || [];
+      const oldIndex = arr.indexOf(activeId);
+      const newIndex = arr.indexOf(overId);
+      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+        // Inline reorder to avoid dependency on reorderOnDay
+        setState((prev) => {
+          const next = structuredClone(prev);
+          const list = next.schedule[sourceContainer] || [];
+          const [removed] = list.splice(oldIndex, 1);
+          list.splice(newIndex, 0, removed);
+          next.schedule[sourceContainer] = list;
+          return next;
+        });
+      }
+      return;
+    }
+
+    // Different container: move item
+    setState((prev) => {
+      const next = structuredClone(prev);
+      // Remove from source
+      if (sourceContainer === 'unscheduled') {
+        next.unscheduled = next.unscheduled.filter((id) => id !== activeId);
+      } else if (next.schedule[sourceContainer]) {
+        next.schedule[sourceContainer] = next.schedule[sourceContainer].filter((id) => id !== activeId);
+        if (next.schedule[sourceContainer].length === 0) delete next.schedule[sourceContainer];
+      }
+      // Add to target
+      if (targetContainer === 'unscheduled') {
+        next.unscheduled.push(activeId);
+        if (next.items[activeId]) next.items[activeId].dueDate = null;
+      } else {
+        next.schedule[targetContainer] = next.schedule[targetContainer] || [];
+        const overIndex = next.schedule[targetContainer].indexOf(overId);
+        if (overIndex !== -1) {
+          next.schedule[targetContainer].splice(overIndex, 0, activeId);
+        } else {
+          next.schedule[targetContainer].push(activeId);
+        }
+        if (next.items[activeId]) next.items[activeId].dueDate = targetContainer;
+      }
+      return next;
+    });
+  }, [findItemContainer]);
+
+  const handleDragCancel = useCallback(() => {
+    setDraggingId(null);
   }, []);
 
   // ── Loading screen ───────────────────────────────────────────
@@ -1011,86 +1103,6 @@ export default function ClassPlannerApp() {
   // ════════════════════════════════════════════════════════════
 
   const isStudent = state.studentView;
-
-  // ── dnd-kit: find which day (or 'unscheduled') an item lives on ──
-  const findItemContainer = useCallback((itemId) => {
-    if (!state) return null;
-    if (state.unscheduled.includes(itemId)) return 'unscheduled';
-    for (const [date, ids] of Object.entries(state.schedule)) {
-      if (ids.includes(itemId)) return date;
-    }
-    return null;
-  }, [state]);
-
-  // ── dnd-kit event handlers ──────────────────────────────────
-  const handleDragStart = useCallback((event) => {
-    setDraggingId(event.active.id);
-  }, []);
-
-  const handleDragEnd = useCallback((event) => {
-    const { active, over } = event;
-    setDraggingId(null);
-
-    if (!over || !active) return;
-    if (isStudent) return;
-
-    const activeId = active.id;
-    const overId = over.id;
-
-    // Determine source container
-    const sourceContainer = findItemContainer(activeId);
-    if (sourceContainer === null) return;
-
-    // Determine target container from the over droppable
-    let targetContainer = null;
-    let targetIndex = undefined;
-
-    if (over.data?.current?.type === 'day') {
-      // Dropped on a day droppable
-      targetContainer = over.data.current.date;
-    } else if (over.data?.current?.type === 'unscheduled' || overId === 'unscheduled') {
-      // Dropped on unscheduled zone
-      targetContainer = 'unscheduled';
-    } else if (typeof overId === 'string' && overId.startsWith('day:')) {
-      // Day droppable id format
-      targetContainer = overId.slice(4);
-    } else {
-      // Dropped on another item — find its container
-      targetContainer = findItemContainer(overId);
-    }
-
-    if (targetContainer === null) return;
-
-    // Same container: reorder
-    if (sourceContainer === targetContainer && sourceContainer !== 'unscheduled') {
-      const arr = state.schedule[sourceContainer] || [];
-      const oldIndex = arr.indexOf(activeId);
-      const newIndex = arr.indexOf(overId);
-      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        reorderOnDay(sourceContainer, oldIndex, newIndex);
-      }
-      return;
-    }
-
-    // Different container: move item
-    if (targetContainer === 'unscheduled') {
-      moveItem(activeId, null);
-    } else {
-      // Find target position based on overId
-      if (overId !== activeId && targetContainer !== 'unscheduled') {
-        const targetArr = state.schedule[targetContainer] || [];
-        const overIndex = targetArr.indexOf(overId);
-        if (overIndex !== -1) {
-          targetIndex = overIndex;
-        }
-      }
-      moveItem(activeId, targetContainer, targetIndex);
-    }
-  }, [isStudent, state, findItemContainer, moveItem, reorderOnDay]);
-
-  const handleDragCancel = useCallback(() => {
-    setDraggingId(null);
-  }, []);
 
   // Active drag item for overlay
   const activeDragItem = draggingId ? state.items[draggingId] : null;
