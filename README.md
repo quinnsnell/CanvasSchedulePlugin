@@ -52,6 +52,10 @@ Canvas's native calendar and syllabus pages don't offer a row-per-class-meeting 
 - Touch-friendly drag-and-drop via `@dnd-kit`
 - Keyboard accessible with skip links and focus management
 
+## Installation
+
+See **[INSTALL.md](./INSTALL.md)** for full setup instructions, including how to use the hosted version, deploy your own instance, and set up a CORS proxy.
+
 ## Quick start
 
 ```bash
