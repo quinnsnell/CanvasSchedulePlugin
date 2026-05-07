@@ -17,8 +17,8 @@ No installation required. Open the link, configure your course, and start planni
 2. Click the **gear icon** (⚙) in the top right to open Course Setup
 3. Fill in your course title, semester start/end dates, and which days you teach
 4. Under **Canvas connection**, enter:
-   - **Canvas base URL**: your institution's Canvas address (e.g., `https://canvas.youruniversity.edu`)
-   - **Personal Access Token**: generate one in Canvas under Account → Settings → "+ New Access Token"
+   - **Canvas base URL**: your institution's Canvas address (e.g., `https://youruniversity.instructure.com`)
+   - **Personal Access Token**: to generate one, log in to Canvas → click your profile picture (top left) → **Settings** → scroll down to **Approved Integrations** → click **+ New Access Token** → give it a name (e.g., "Schedule Planner") → click **Generate Token** → copy the token immediately (you won't be able to see it again)
 5. Click **Connect** — you should see your courses appear in a dropdown
 6. Select your course and click **Refresh** to import all assignments
 
@@ -151,7 +151,7 @@ To run the app locally with Canvas API proxying through Vite's dev server:
 Or manually:
 
 ```bash
-VITE_CANVAS_URL=https://canvas.youruniversity.edu npm run dev
+VITE_CANVAS_URL=https://youruniversity.instructure.com npm run dev
 ```
 
 Open http://localhost:5173. In dev mode, Vite proxies Canvas API requests directly — no CORS proxy needed.

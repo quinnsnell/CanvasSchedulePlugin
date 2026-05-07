@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react';
 // of a domain or under a sub-path (e.g., GitHub Pages /repo-name/).
 // Set your Canvas instance URL here for local development.
 // The dev server proxies /api/v1/* requests to Canvas, bypassing CORS entirely.
-const CANVAS_BASE_URL = process.env.CANVAS_URL || 'https://canvas.youruniversity.edu';
+const CANVAS_BASE_URL = process.env.CANVAS_URL || 'https://youruniversity.instructure.com';
 
 export default defineConfig({
   plugins: [react()],

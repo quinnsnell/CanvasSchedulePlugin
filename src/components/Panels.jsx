@@ -137,7 +137,7 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
           </p>
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
             <Field label="Canvas base URL">
-              <input placeholder="https://canvas.youruniversity.edu"
+              <input placeholder="https://youruniversity.instructure.com"
                 value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={inputStyle()} />
             </Field>
             <Field label="Personal Access Token">

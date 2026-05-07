@@ -75,7 +75,7 @@ For development with Canvas API proxying (avoids CORS issues):
 
 1. Click the **gear icon** (⚙) to open Course Setup
 2. Set your course title, semester start/end dates, and teaching days
-3. Enter your Canvas base URL (e.g., `https://canvas.youruniversity.edu`) and a [Personal Access Token](https://community.canvaslms.com/t5/Admin-Guide/How-do-I-manage-API-access-tokens-as-an-admin/ta-p/89)
+3. Enter your Canvas base URL (e.g., `https://youruniversity.instructure.com`) and a [Personal Access Token](https://community.canvaslms.com/t5/Admin-Guide/How-do-I-manage-API-access-tokens-as-an-admin/ta-p/89)
 4. Pick your course from the dropdown and click **Refresh** to import assignments
 
 ## Deployment

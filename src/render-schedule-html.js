@@ -11,7 +11,7 @@
 import { LIGHT, DARK } from './theme.js';
 import { computeAllDays, generateClassDays, weekKey, weekNumber } from './utils.js';
 
-export default function renderScheduleHtml(s) {
+export default function renderScheduleHtml(s, courseTitle) {
   const L = LIGHT;
   const D = DARK;
 
@@ -75,14 +75,12 @@ export default function renderScheduleHtml(s) {
     if (moduleTitle) {
       const dayCount = pubModuleDayCounts[d];
       const dayCountHtml = dayCount != null
-        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 400; color: ${v('muted', L.muted)}; margin-left: 10px; letter-spacing: 0.02em;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
+        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 400; color: ${v('ink-mid', L.inkMid)}; margin-left: 10px; letter-spacing: 0.02em;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
         : '';
-      rows += `<tr><td colspan="2" style="padding: 10px 16px; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${v('ink', L.ink)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">${moduleTitle}${dayCountHtml}</td></tr>`;
+      rows += `<tr><th scope="colgroup" colspan="2" style="padding: 10px 16px; text-align: left; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${v('ink', L.ink)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">${moduleTitle}${dayCountHtml}</th></tr>`;
     }
 
-    if (isNewWeek) {
-      rows += `<tr><td colspan="2" style="padding: 0;"><div style="border-top: 2px solid ${v('border-strong', L.borderStrong)};"></div></td></tr>`;
-    }
+    const weekBorderStyle = isNewWeek ? `border-top: 2px solid ${v('border-strong', L.borderStrong)};` : '';
 
     let content = '';
     items.forEach((item) => {
@@ -92,8 +90,8 @@ export default function renderScheduleHtml(s) {
           : (item.title || 'Untitled');
         content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
           <div style="margin-bottom: 4px;">
-            <span style="font-family: ui-monospace, monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
-            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 10px; color: ${v('muted', L.muted)}; margin-left: 6px;">${item.points} pts</span>` : ''}
+            <span style="font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
+            ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 12px; color: ${v('ink-mid', L.inkMid)}; margin-left: 6px;">${item.points} pts</span>` : ''}
           </div>
           <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${v('ink', L.ink)}; line-height: 1.3;">${titleHtml}</div>
         </div>`;
@@ -105,17 +103,17 @@ export default function renderScheduleHtml(s) {
     });
 
     if (holidayLabel) {
-      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 11px; color: ${v('ox', L.ox)}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
+      content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 12px; color: ${v('ox', L.ox)}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
     } else if (!content) {
-      content = `<div style="padding: 4px 0;">&nbsp;</div>`;
+      content = `<div style="padding: 4px 0; font-size: 0;"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);">No items scheduled</span></div>`;
     }
 
     const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
     const rowOpacity = holidayLabel ? 'opacity: 0.7;' : '';
-    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${v('border', L.border)}; box-shadow: ${rowShadow}; ${rowOpacity}">
+    rows += `<tr style="background: ${bgColor}; border-bottom: 1px solid ${v('border', L.border)}; ${weekBorderStyle} box-shadow: ${rowShadow}; ${rowOpacity}">
       <td style="padding: 14px 16px; border-right: 1px solid ${v('border', L.border)}; vertical-align: top; width: 170px;">
         <div style="font-family: Georgia, serif; font-weight: 500; color: ${v('ink', L.ink)}; font-size: 20px; line-height: 1.1; letter-spacing: -0.01em;">${dateNum}</div>
-        <div style="font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('muted', L.muted)}; margin-top: 2px;">${dayName}</div>
+        <div style="font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)}; margin-top: 2px;">${dayName}</div>
       </td>
       <td style="padding: 14px 16px; vertical-align: top;">${content}</td>
     </tr>`;
@@ -124,9 +122,10 @@ export default function renderScheduleHtml(s) {
   return `${darkStyleBlock}
   <div class="schedule-wrap" style="max-width: 1152px; margin: 0 auto;">
     <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
+      <caption style="text-align: left; padding: 12px 16px; font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: ${v('ink', L.ink)}; caption-side: top;">${courseTitle || 'Course Schedule'}</caption>
       <thead><tr style="background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
-        <th style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: ${v('muted', L.muted)};">Readings · Assignments · Materials</th>
+        <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
+        <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)};">Readings · Assignments · Materials</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
