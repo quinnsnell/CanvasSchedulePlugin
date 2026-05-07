@@ -20,7 +20,7 @@ import {
 } from '@dnd-kit/core';
 import {
   X, Eye, EyeOff, Settings, RefreshCw,
-  Cloud, CloudOff, Upload, Calendar, History, Link2, Check,
+  Cloud, Upload, Calendar, History, Link2, Check,
   Undo2, Redo2, ChevronRight, Printer, CalendarDays, Sun, Moon, Search, Repeat,
 } from 'lucide-react';
 import { T, LIGHT, DARK, setTheme, FONT_DISPLAY, FONT_BODY, FONT_MONO, GROUP_COLORS } from './theme.js';
@@ -28,14 +28,14 @@ import {
   DAY_CODES, DAY_FULL, PENDING_TTL_MS, uid,
   generateClassDays, computeAllDays, getAddableDatesAfter,
   weekKey, weekNumber, addDays, fmtMonthDay, fmtFull,
-  localDateStr, generateICal, parseICal, parseCSV, Store,
+  localDateStr, generateICal, parseICal, parseCSV, exportTemplate, importTemplate, Store,
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
 import { IconButton, ToggleButton, inputStyle } from './components/ui.jsx';
 import ClassDayRow from './components/ClassDayRow.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
-import { SetupPanel, CanvasPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/Panels.jsx';
+import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/Panels.jsx';
 
 // ── Initial state (blank — no demo data) ───────────────────────
 
@@ -70,7 +70,6 @@ export default function ClassPlannerApp() {
   const [state, setState] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [showCanvas, setShowCanvas] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [toast, setToast] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -467,7 +466,7 @@ export default function ClassPlannerApp() {
     const { connected, baseUrl, courseId } = state.canvas;
     if (!connected || !courseId) {
       showToast('Connect Canvas and pick a course first', 'err');
-      setShowCanvas(true);
+      setShowSetup(true);
       return;
     }
     const dueAt = encodeURIComponent(`${date}T23:59:00`);
@@ -649,6 +648,65 @@ export default function ClassPlannerApp() {
     a.click();
     URL.revokeObjectURL(url);
     showToast('Calendar file downloaded');
+  };
+
+  // ── Semester template export/import ─────────────────────────
+
+  const exportSemesterTemplate = () => {
+    if (!state.setup.startDate || !state.setup.endDate) {
+      showToast('Set up semester dates first', 'err');
+      return;
+    }
+    const template = exportTemplate(state);
+    const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(state.setup.courseTitle || 'schedule').replace(/[^a-zA-Z0-9]/g, '_')}_template.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`Template exported — ${template.totalTeachingDays} days, ${template.slots.length} slots`);
+  };
+
+  const importSemesterTemplate = (file) => {
+    if (!state.setup.startDate || !state.setup.endDate) {
+      showToast('Set up semester dates first, then import a template', 'err');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const template = JSON.parse(e.target.result);
+        if (!template.slots || !Array.isArray(template.slots)) {
+          showToast('Invalid template file', 'err');
+          return;
+        }
+        const result = importTemplate(template, state.setup);
+        const newTeachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
+        const mapped = Math.min(template.totalTeachingDays, newTeachingDays.length);
+
+        if (template.totalTeachingDays > newTeachingDays.length) {
+          showToast(`Template has ${template.totalTeachingDays} days but new semester has ${newTeachingDays.length} — some items may be lost`, 'err');
+        }
+
+        updateState((s) => {
+          s.items = { ...s.items, ...result.items };
+          // Merge into existing schedule
+          Object.entries(result.schedule).forEach(([date, ids]) => {
+            s.schedule[date] = [...(s.schedule[date] || []), ...ids];
+          });
+          s.holidays = { ...s.holidays, ...result.holidays };
+          s.modules = { ...s.modules, ...result.modules };
+          s.unscheduled = [...s.unscheduled, ...result.unscheduled];
+          return s;
+        });
+        const itemCount = Object.keys(result.items).length;
+        showToast(`Imported template: ${itemCount} items across ${mapped} days`);
+      } catch (err) {
+        showToast(`Failed to import template: ${err.message}`, 'err');
+      }
+    };
+    reader.readAsText(file);
   };
 
   // ── Import schedule from iCal/CSV ───────────────────────────
@@ -1321,7 +1379,6 @@ export default function ClassPlannerApp() {
         onShowRecurringModal={() => setShowRecurringModal(true)}
         onPublish={publishToCanvas} publishing={publishing}
         onShareLink={copyShareLink} lastPublishedUrl={lastPublishedUrl}
-        onToggleCanvas={() => setShowCanvas((v) => !v)}
         onToggleSetup={() => setShowSetup((v) => !v)}
         onToggleActivityLog={() => setShowActivityLog((v) => !v)}
       />
@@ -1350,15 +1407,11 @@ export default function ClassPlannerApp() {
       )}
 
       {!isStudent && showSetup && (
-        <SetupPanel state={state} updateState={updateState} onImport={importSchedule} onClose={() => setShowSetup(false)} />
-      )}
-      {!isStudent && showCanvas && (
-        <CanvasPanel
-          state={state} updateState={updateState}
+        <SetupPanel state={state} updateState={updateState} onImport={importSchedule}
+          onExportTemplate={exportSemesterTemplate} onImportTemplate={importSemesterTemplate}
           onConnect={connectCanvas} onRefresh={refreshFromCanvas} refreshing={refreshing}
           onSwitchCourse={switchCourse}
-          onClose={() => setShowCanvas(false)}
-        />
+          onClose={() => setShowSetup(false)} />
       )}
 
       {/* ── Main schedule grid ── */}
@@ -1369,7 +1422,6 @@ export default function ClassPlannerApp() {
           {allDays.length === 0 ? (
             <EmptyState
               onSetup={() => setShowSetup(true)}
-              onConnect={() => setShowCanvas(true)}
               isConnected={state.canvas.connected}
             />
           ) : (
@@ -1449,7 +1501,7 @@ function Header({
   filterGroup, onFilterGroupChange, assignmentGroups,
   darkMode, undoStack, redoStack,
   onToggleDark, onToggleStudent, onUndo, onRedo, onExportICal,
-  onShowShiftModal, onShowRecurringModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleCanvas, onToggleSetup,
+  onShowShiftModal, onShowRecurringModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleSetup,
   onToggleActivityLog,
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1597,14 +1649,11 @@ function Header({
                     <Link2 size={16} color={lastPublishedUrl ? T.inkBlue : T.muted} />
                   </IconButton>
                 </>)}
-                <IconButton onClick={onToggleCanvas} aria-label="Canvas connection settings">
-                  {state.canvas.connected ? <Cloud size={16} color={T.forest} /> : <CloudOff size={16} color={T.muted} />}
-                </IconButton>
                 <IconButton onClick={onToggleActivityLog} aria-label="Toggle publish history">
                   <History size={16} />
                 </IconButton>
                 <IconButton onClick={onToggleSetup} aria-label="Course setup">
-                  <Settings size={16} />
+                  <Settings size={16} color={state.canvas.connected ? T.forest : T.ink} />
                 </IconButton>
               </>
             )}

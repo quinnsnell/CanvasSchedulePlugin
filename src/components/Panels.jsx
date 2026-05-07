@@ -1,7 +1,6 @@
 /**
  * Configuration panels and modals:
- * - SetupPanel: semester dates, course title, class meeting days
- * - CanvasPanel: Canvas LMS connection, course picker, CORS proxy config
+ * - SetupPanel: semester dates, course title, class meeting days, Canvas connection
  * - ShiftModal: bulk-shift all dates forward/backward
  * - ConflictModal: conflict resolution when publishing to Canvas
  * - RecurringModal: batch-create recurring notes across matching teaching days
@@ -11,7 +10,7 @@
 import React, { useState } from 'react';
 import {
   X, RefreshCw, Check, AlertCircle, AlertTriangle, Cloud, Calendar, Settings,
-  ChevronLeft, ChevronRight, Upload,
+  ChevronLeft, ChevronRight, Upload, Download,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
 import { DAY_CODES, DAY_SHORT, parseICal, parseCSV } from '../utils.js';
@@ -20,11 +19,18 @@ import { Field, IconButton, ActionButton, inputStyle, iconBtnStyle } from './ui.
 
 // ── Setup Panel ────────────────────────────────────────────────
 
-export function SetupPanel({ state, updateState, onImport, onClose }) {
+export function SetupPanel({ state, updateState, onImport, onExportTemplate, onImportTemplate, onConnect, onRefresh, refreshing, onSwitchCourse, onClose }) {
   const [title, setTitle] = useState(state.setup.courseTitle);
   const [start, setStart] = useState(state.setup.startDate);
   const [end, setEnd] = useState(state.setup.endDate);
   const [days, setDays] = useState(state.setup.classDays);
+
+  // Canvas connection state
+  const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
+  const [token, setToken] = useState(state.canvas.token || '');
+  const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
+  const [busy, setBusy] = useState(false);
+  const [canvasStatus, setCanvasStatus] = useState(null);
 
   const toggleDay = (c) =>
     setDays((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -58,6 +64,25 @@ export function SetupPanel({ state, updateState, onImport, onClose }) {
     e.target.value = '';
   };
 
+  const handleProxyChange = (val) => {
+    setProxyUrl(val);
+    const trimmed = val.trim().replace(/\/+$/, '');
+    try { localStorage.setItem('planner-cors-proxy', trimmed); } catch {}
+    setCorsProxy(trimmed || getCorsProxy());
+  };
+
+  const doConnect = async () => {
+    setBusy(true);
+    setCanvasStatus(null);
+    const result = await onConnect(baseUrl.trim(), token.trim());
+    if (result.ok) {
+      setCanvasStatus({ msg: `Connected — ${result.count} courses found`, kind: 'ok' });
+    } else {
+      setCanvasStatus({ msg: result.error, kind: 'err' });
+    }
+    setBusy(false);
+  };
+
   return (
     <div style={{ background: T.paper, borderBottom: `1px solid ${T.border}` }}>
       <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
@@ -65,6 +90,8 @@ export function SetupPanel({ state, updateState, onImport, onClose }) {
           <h2 id="setup-heading" style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Course setup</h2>
           <IconButton onClick={onClose} aria-label="Close setup panel"><X size={16} /></IconButton>
         </div>
+
+        {/* ── Semester settings ── */}
         <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
           <Field label="Course title">
             <input value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle()} />
@@ -94,9 +121,92 @@ export function SetupPanel({ state, updateState, onImport, onClose }) {
             </div>
           </Field>
         </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <ActionButton onClick={apply} primary>Apply</ActionButton>
+        </div>
+
+        {/* ── Canvas connection ── */}
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${T.border}` }}>
+          <h3 style={{ fontFamily: FONT_DISPLAY, fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
+            <Cloud size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+            Canvas connection
+          </h3>
+          <p style={{ color: T.muted, fontSize: '13px', marginBottom: 16, maxWidth: 760 }}>
+            Generate a Personal Access Token in Canvas (Account → Settings → "+ New Access Token").
+            Refresh imports every Canvas assignment as a draggable card on its due date.
+          </p>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <Field label="Canvas base URL">
+              <input placeholder="https://canvas.youruniversity.edu"
+                value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={inputStyle()} />
+            </Field>
+            <Field label="Personal Access Token">
+              <input type="password" placeholder="paste token…"
+                value={token} onChange={(e) => setToken(e.target.value)} style={inputStyle()} />
+            </Field>
+            <Field label="CORS proxy URL (optional)">
+              <input placeholder={CORS_PROXY_DEFAULT}
+                value={proxyUrl} onChange={(e) => handleProxyChange(e.target.value)} style={inputStyle()} />
+            </Field>
+          </div>
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <ActionButton onClick={doConnect} primary>
+              {busy ? <RefreshCw size={14} className="animate-spin" /> : <Cloud size={14} />}
+              {state.canvas.connected ? 'Reconnect' : 'Connect'}
+            </ActionButton>
+            {state.canvas.connected && (
+              <>
+                <span style={{ color: T.forest, fontSize: '12px', fontFamily: FONT_MONO }}>
+                  <Check size={12} style={{ display: 'inline', marginRight: 4 }} />
+                  Connected
+                </span>
+                <select
+                  value={state.canvas.courseId || ''}
+                  onChange={(e) => onSwitchCourse(e.target.value)}
+                  style={{ ...inputStyle(), width: 'auto', minWidth: 220 }}>
+                  <option value="">— pick a course —</option>
+                  {state.canvas.courses.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <ActionButton onClick={onRefresh} disabled={refreshing}>
+                  <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing…' : 'Refresh'}
+                </ActionButton>
+              </>
+            )}
+          </div>
+          {canvasStatus && (
+            <div style={{
+              marginTop: 14, padding: 10, borderRadius: 3, fontSize: '12px', display: 'flex', gap: 8,
+              background: canvasStatus.kind === 'ok' ? T.successBg : T.errorBg,
+              border: `1px solid ${canvasStatus.kind === 'ok' ? T.successBorder : T.errorBorder}`,
+              color: canvasStatus.kind === 'ok' ? T.forest : T.ox,
+            }}>
+              {canvasStatus.kind === 'ok'
+                ? <Check size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                : <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />}
+              <span>{canvasStatus.msg}</span>
+            </div>
+          )}
+          {!state.canvas.connected && !canvasStatus && (
+            <div style={{
+              marginTop: 14, padding: 10, background: T.subtle, border: `1px solid ${T.border}`,
+              borderRadius: 3, fontSize: '12px', color: T.muted, display: 'flex', gap: 8,
+            }}>
+              <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>
+                If connecting fails, your browser may be blocking cross-origin requests (CORS).
+                The app routes requests through a CORS proxy. You can use the default or enter your own proxy URL above.
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Import ── */}
         {onImport && (
-          <div className="mt-4">
-            <Field label="Import">
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: `1px solid ${T.border}` }}>
+            <h3 style={{ fontFamily: FONT_DISPLAY, fontSize: '16px', fontWeight: 600, marginBottom: 12 }}>Import &amp; templates</h3>
+            <Field label="Import from file">
               <div className="flex items-center gap-3 flex-wrap">
                 <label style={{
                   display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -110,127 +220,36 @@ export function SetupPanel({ state, updateState, onImport, onClose }) {
                   <Upload size={14} /> Import file
                 </label>
                 <span style={{ fontSize: '12px', color: T.muted, fontFamily: FONT_BODY }}>
-                  Import from iCal (.ics) or CSV (date, title columns)
+                  iCal (.ics) or CSV (date, title columns)
                 </span>
               </div>
             </Field>
-          </div>
-        )}
-        <div className="mt-5 flex justify-end gap-2">
-          <ActionButton onClick={apply} primary>Apply</ActionButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Canvas Panel ───────────────────────────────────────────────
-
-export function CanvasPanel({ state, updateState, onConnect, onRefresh, refreshing, onSwitchCourse, onClose }) {
-  const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
-  const [token, setToken] = useState(state.canvas.token || '');
-  const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState(null);
-
-  const handleProxyChange = (val) => {
-    setProxyUrl(val);
-    const trimmed = val.trim().replace(/\/+$/, '');
-    try { localStorage.setItem('planner-cors-proxy', trimmed); } catch {}
-    setCorsProxy(trimmed || getCorsProxy());
-  };
-
-  const doConnect = async () => {
-    setBusy(true);
-    setStatus(null);
-    const result = await onConnect(baseUrl.trim(), token.trim());
-    if (result.ok) {
-      setStatus({ msg: `Connected — ${result.count} courses found`, kind: 'ok' });
-    } else {
-      setStatus({ msg: result.error, kind: 'err' });
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div style={{ background: T.paper, borderBottom: `1px solid ${T.border}` }}>
-      <div className="planner-header" style={{ maxWidth: 1152, margin: '0 auto' }}>
-        <div className="flex items-center justify-between mb-3">
-          <h2 id="canvas-heading" style={{ fontFamily: FONT_DISPLAY, fontSize: '18px', fontWeight: 600 }}>Canvas connection</h2>
-          <IconButton onClick={onClose} aria-label="Close Canvas panel"><X size={16} /></IconButton>
-        </div>
-        <p style={{ color: T.muted, fontSize: '13px', marginBottom: 16, maxWidth: 760 }}>
-          Generate a Personal Access Token in Canvas (Account → Settings → "+ New Access Token").
-          Refresh imports every Canvas assignment as a draggable card on its due date.
-          Off-day due dates are added to the schedule automatically.
-        </p>
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-          <Field label="Canvas base URL">
-            <input placeholder="https://canvas.youruniversity.edu"
-              value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={inputStyle()} />
-          </Field>
-          <Field label="Personal Access Token">
-            <input type="password" placeholder="paste token…"
-              value={token} onChange={(e) => setToken(e.target.value)} style={inputStyle()} />
-          </Field>
-          <Field label="CORS proxy URL (optional)">
-            <input placeholder={CORS_PROXY_DEFAULT}
-              value={proxyUrl} onChange={(e) => handleProxyChange(e.target.value)} style={inputStyle()} />
-          </Field>
-        </div>
-        <div className="mt-3 flex items-center gap-3 flex-wrap">
-          <ActionButton onClick={doConnect} primary>
-            {busy ? <RefreshCw size={14} className="animate-spin" /> : <Cloud size={14} />}
-            {state.canvas.connected ? 'Reconnect' : 'Connect'}
-          </ActionButton>
-          {state.canvas.connected && (
-            <>
-              <span style={{ color: T.forest, fontSize: '12px', fontFamily: FONT_MONO }}>
-                <Check size={12} style={{ display: 'inline', marginRight: 4 }} />
-                Connected
-              </span>
-              <select
-                value={state.canvas.courseId || ''}
-                onChange={(e) => onSwitchCourse(e.target.value)}
-                style={{ ...inputStyle(), width: 'auto', minWidth: 220 }}>
-                <option value="">— pick a course —</option>
-                {state.canvas.courses.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              <ActionButton onClick={onRefresh} disabled={refreshing}>
-                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> {refreshing ? 'Refreshing…' : 'Refresh'}
-              </ActionButton>
-            </>
-          )}
-        </div>
-
-        {/* Status message */}
-        {status && (
-          <div style={{
-            marginTop: 14, padding: 10, borderRadius: 3, fontSize: '12px', display: 'flex', gap: 8,
-            background: status.kind === 'ok' ? T.successBg : T.errorBg,
-            border: `1px solid ${status.kind === 'ok' ? T.successBorder : T.errorBorder}`,
-            color: status.kind === 'ok' ? T.forest : T.ox,
-          }}>
-            {status.kind === 'ok'
-              ? <Check size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-              : <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />}
-            <span>{status.msg}</span>
-          </div>
-        )}
-
-        {/* CORS help text (only shown before first connection) */}
-        {!state.canvas.connected && !status && (
-          <div style={{
-            marginTop: 14, padding: 10, background: T.subtle, border: `1px solid ${T.border}`,
-            borderRadius: 3, fontSize: '12px', color: T.muted, display: 'flex', gap: 8,
-          }}>
-            <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-            <span>
-              If connecting fails, your browser may be blocking cross-origin requests (CORS).
-              The app routes requests through a CORS proxy. You can use the default or enter your own proxy URL above.
-            </span>
+            <div className="mt-3">
+              <Field label="Semester template">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <ActionButton onClick={onExportTemplate}>
+                    <Download size={14} /> Export template
+                  </ActionButton>
+                  <label style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 14px', borderRadius: 3, cursor: 'pointer',
+                    fontFamily: FONT_BODY, fontSize: '13px', fontWeight: 500,
+                    border: `1px solid ${T.border}`,
+                    background: T.paper, color: T.ink,
+                  }}>
+                    <input type="file" accept=".json" onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file && onImportTemplate) onImportTemplate(file);
+                      e.target.value = '';
+                    }} style={{ display: 'none' }} />
+                    <Upload size={14} /> Import template
+                  </label>
+                </div>
+                <p style={{ fontSize: '12px', color: T.muted, fontFamily: FONT_BODY, marginTop: 6 }}>
+                  Reuse a schedule across semesters. Items are mapped by week &amp; day position, not absolute dates.
+                </p>
+              </Field>
+            </div>
           </div>
         )}
       </div>
@@ -580,7 +599,7 @@ export function RecurringModal({ classDays, onCreate, onClose }) {
 
 // ── Empty State (onboarding) ───────────────────────────────────
 
-export function EmptyState({ onSetup, onConnect, isConnected }) {
+export function EmptyState({ onSetup, isConnected }) {
   return (
     <div style={{
       background: T.paper, border: `1px dashed ${T.borderStrong}`, borderRadius: 4,
@@ -592,14 +611,11 @@ export function EmptyState({ onSetup, onConnect, isConnected }) {
       </div>
       <div style={{ fontSize: '13px', color: T.muted, marginBottom: 18, maxWidth: 420, margin: '0 auto 18px' }}>
         {isConnected
-          ? 'Pick a course from the Canvas panel, then set your semester dates.'
-          : 'Connect to Canvas to import your courses and assignments, then set your semester dates.'}
+          ? 'Set your semester dates and pick a course to get started.'
+          : 'Open Course setup to set semester dates and connect to Canvas.'}
       </div>
       <div className="flex gap-3 justify-center flex-wrap">
-        {!isConnected && (
-          <ActionButton onClick={onConnect} primary><Cloud size={14} /> Connect Canvas</ActionButton>
-        )}
-        <ActionButton onClick={onSetup} primary={isConnected}><Settings size={14} /> Course setup</ActionButton>
+        <ActionButton onClick={onSetup} primary><Settings size={14} /> Course setup</ActionButton>
       </div>
     </div>
   );

@@ -298,6 +298,102 @@ function normalizeDate(str) {
 const KEY_PREFIX = 'class-planner-v3';
 const KEY_META = 'class-planner-meta';
 
+// ── Semester template export/import ──────────────────────────
+
+/**
+ * Export the current schedule as a semester template.
+ * Items are positioned by (teaching day index) rather than absolute date,
+ * so they can be re-mapped to any semester with the same class-day pattern.
+ *
+ * Returns a JSON-serializable template object.
+ */
+export function exportTemplate(state) {
+  const teachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
+
+  // Map each date to its teaching-day index (0-based)
+  const dateToIndex = {};
+  teachingDays.forEach((d, i) => { dateToIndex[d] = i; });
+
+  // Convert schedule: date → [itemIds]  →  teachingDayIndex → [items]
+  const slots = [];
+  teachingDays.forEach((date, idx) => {
+    const ids = state.schedule[date] || [];
+    if (ids.length === 0 && !state.holidays[date] && !state.modules[date]) return;
+    const items = ids.map((id) => {
+      const item = state.items[id];
+      if (!item) return null;
+      // Strip Canvas-specific IDs — they belong to the old course
+      const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
+      return rest;
+    }).filter(Boolean);
+    slots.push({
+      index: idx,
+      dayCode: DAY_CODES[new Date(date + 'T12:00:00').getDay()],
+      items,
+      holiday: state.holidays[date] || null,
+      module: state.modules[date] || null,
+    });
+  });
+
+  // Unscheduled items (readings, notes not on any day)
+  const unscheduledItems = (state.unscheduled || []).map((id) => {
+    const item = state.items[id];
+    if (!item) return null;
+    const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
+    return rest;
+  }).filter(Boolean);
+
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    courseTitle: state.setup.courseTitle || '',
+    classDays: state.setup.classDays,
+    totalTeachingDays: teachingDays.length,
+    slots,
+    unscheduledItems,
+  };
+}
+
+/**
+ * Import a semester template into the current semester.
+ * Maps items by teaching-day index to the new semester's dates.
+ * Returns a partial state update: { items, schedule, holidays, modules, unscheduled }.
+ */
+export function importTemplate(template, setup) {
+  const newTeachingDays = generateClassDays(setup.startDate, setup.endDate, setup.classDays);
+
+  const items = {};
+  const schedule = {};
+  const holidays = {};
+  const modules = {};
+  const unscheduled = [];
+
+  // Place items by teaching-day index
+  template.slots.forEach((slot) => {
+    if (slot.index >= newTeachingDays.length) return; // semester too short
+    const date = newTeachingDays[slot.index];
+
+    if (slot.holiday) holidays[date] = slot.holiday;
+    if (slot.module) modules[date] = slot.module;
+
+    schedule[date] = schedule[date] || [];
+    slot.items.forEach((itemData) => {
+      const id = uid();
+      items[id] = { ...itemData, id, dueDate: date };
+      schedule[date].push(id);
+    });
+  });
+
+  // Unscheduled items
+  (template.unscheduledItems || []).forEach((itemData) => {
+    const id = uid();
+    items[id] = { ...itemData, id };
+    unscheduled.push(id);
+  });
+
+  return { items, schedule, holidays, modules, unscheduled, extraDays: [] };
+}
+
 /**
  * Storage abstraction — localStorage in normal browsers,
  * window.storage in claude.ai artifact context.
