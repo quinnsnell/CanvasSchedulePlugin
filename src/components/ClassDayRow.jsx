@@ -10,7 +10,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
   FileText, BookOpen, ExternalLink, CalendarPlus, MinusCircle,
-  Hourglass, Ban, ListPlus,
+  Hourglass, Ban, ListPlus, Repeat,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
 import { DAY_CODES, DAY_FULL, fmtMonthDay } from '../utils.js';
@@ -23,6 +23,7 @@ export default function ClassDayRow({
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
   onToggleHoliday, onAddModule, onReorder,
+  onShowRecurringModal,
   addableDates, draggingId,
   autoEditId, clearAutoEdit,
   assignmentGroups,
@@ -115,6 +116,7 @@ export default function ClassDayRow({
         onMoveItem={onMoveItem} onUpdateItem={onUpdateItem} onDeleteItem={onDeleteItem}
         onDuplicate={onDuplicate} onReorder={onReorder}
         onAddNote={onAddNote} onAddAssignment={onAddAssignment}
+        onShowRecurringModal={onShowRecurringModal}
         autoEditId={autoEditId} clearAutoEdit={clearAutoEdit}
         assignmentGroups={assignmentGroups}
       />
@@ -143,10 +145,12 @@ function ContentColumn({
   items, date, isStudent, canvas, canvasReady, holidayLabel,
   draggingId,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
-  onAddNote, onAddAssignment,
+  onAddNote, onAddAssignment, onShowRecurringModal,
   autoEditId, clearAutoEdit,
   assignmentGroups,
 }) {
+  const [showNoteMenu, setShowNoteMenu] = useState(false);
+
   const { isOver, setNodeRef } = useDroppable({
     id: `day:${date}`,
     data: { type: 'day', date },
@@ -192,9 +196,18 @@ function ContentColumn({
       {/* Add note / assignment buttons */}
       {!isStudent && !holidayLabel && (
         <div className="day-tools" style={{ marginTop: 'auto', paddingTop: 6 }}>
-          <DayToolBtn onClick={onAddNote} title="Add a reading / note on this day">
-            <FileText size={11} /> Note
-          </DayToolBtn>
+          <div style={{ position: 'relative' }}>
+            <DayToolBtn onClick={() => setShowNoteMenu((v) => !v)} title="Add a note">
+              <FileText size={11} /> Note
+            </DayToolBtn>
+            {showNoteMenu && (
+              <NoteMenuPopover
+                onAddNote={() => { onAddNote(); setShowNoteMenu(false); }}
+                onAddRecurring={() => { onShowRecurringModal(); setShowNoteMenu(false); }}
+                onClose={() => setShowNoteMenu(false)}
+              />
+            )}
+          </div>
           <DayToolBtn
             onClick={onAddAssignment}
             title={canvasReady ? 'Open Canvas to create an assignment for this day' : 'Connect Canvas to add assignments'}
@@ -204,6 +217,50 @@ function ContentColumn({
           </DayToolBtn>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Note Menu Popover ─────────────────────────────────────────
+
+function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const btnStyle = {
+    display: 'flex', alignItems: 'center', gap: 8,
+    width: '100%', padding: '7px 10px', textAlign: 'left',
+    fontFamily: FONT_BODY, fontSize: '13px', color: T.ink,
+    background: 'transparent', border: 'none', borderRadius: 2, cursor: 'pointer',
+  };
+
+  return (
+    <div ref={ref} style={{
+      position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+      background: T.paper, border: `1px solid ${T.borderStrong}`, borderRadius: 4,
+      boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 30,
+      minWidth: 180, padding: 4,
+    }}>
+      <button onClick={onAddNote} style={btnStyle}
+        onMouseOver={(e) => (e.currentTarget.style.background = T.inkBlueSoft)}
+        onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}>
+        <FileText size={13} /> Add note
+      </button>
+      <button onClick={onAddRecurring} style={btnStyle}
+        onMouseOver={(e) => (e.currentTarget.style.background = T.inkBlueSoft)}
+        onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}>
+        <Repeat size={13} /> Add recurring note
+      </button>
     </div>
   );
 }

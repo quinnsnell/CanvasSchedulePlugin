@@ -15,6 +15,7 @@ export default function ScheduleTable({
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
   onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
   onToggleHoliday, onAddModule, onRemoveModule,
+  onShowRecurringModal,
   allDaysSet, assignmentGroups,
 }) {
   const iconBtnStyleVal = { color: T.muted, padding: 2, background: 'transparent', border: 'none', cursor: 'pointer' };
@@ -87,6 +88,7 @@ export default function ScheduleTable({
               onRemoveExtraDay={() => onRemoveExtraDay(d)}
               onToggleHoliday={() => onToggleHoliday(d)}
               onAddModule={() => onAddModule(d)}
+              onShowRecurringModal={onShowRecurringModal}
               onReorder={(from, to) => onReorder(d, from, to)}
               addableDates={getAddableDatesAfter(d, allDaysSet, state.setup.endDate)}
               draggingId={draggingId}

@@ -1106,7 +1106,6 @@ export default function ClassPlannerApp() {
         onToggleStudent={() => updateState((s) => { s.studentView = !s.studentView; return s; })}
         onUndo={undo} onRedo={redo} onExportICal={exportICal}
         onShowShiftModal={() => setShowShiftModal(true)}
-        onShowRecurringModal={() => setShowRecurringModal(true)}
         onPublish={publishToCanvas} publishing={publishing}
         onShareLink={copyShareLink} lastPublishedUrl={lastPublishedUrl}
         onToggleSetup={() => setShowSetup((v) => !v)}
@@ -1161,6 +1160,7 @@ export default function ClassPlannerApp() {
               onAddExtraDay={addExtraDay} onRemoveExtraDay={removeExtraDay}
               onToggleHoliday={toggleHoliday} onAddModule={addModuleHeader}
               onRemoveModule={removeModuleHeader}
+              onShowRecurringModal={() => setShowRecurringModal(true)}
               allDaysSet={allDaysSet}
               assignmentGroups={state.canvas.assignmentGroups || {}}
             />

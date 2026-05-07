@@ -6,7 +6,7 @@ import React, { useState, useRef } from 'react';
 import {
   X, Eye, EyeOff, Settings, RefreshCw,
   Upload, History, Link2, Check,
-  Undo2, Redo2, ChevronRight, Printer, CalendarDays, Sun, Moon, Search, Repeat,
+  Undo2, Redo2, ChevronRight, Printer, CalendarDays, Sun, Moon, Search,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_MONO } from '../theme.js';
 import { DAY_FULL, fmtFull } from '../utils.js';
@@ -18,7 +18,7 @@ export default function Header({
   filterGroup, onFilterGroupChange, assignmentGroups,
   darkMode, undoStack, redoStack,
   onToggleDark, onToggleStudent, onUndo, onRedo, onExportICal,
-  onShowShiftModal, onShowRecurringModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleSetup,
+  onShowShiftModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleSetup,
   onToggleActivityLog,
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -156,10 +156,7 @@ export default function Header({
                 <IconButton onClick={onShowShiftModal} aria-label="Shift all dates forward or backward">
                   <ChevronRight size={16} />
                 </IconButton>
-                <IconButton onClick={onShowRecurringModal} aria-label="Create recurring note">
-                  <Repeat size={16} />
-                </IconButton>
-                {state.canvas.connected && state.canvas.courseId && (<>
+{state.canvas.connected && state.canvas.courseId && (<>
                   <IconButton onClick={onPublish} aria-label="Publish schedule to Canvas" disabled={publishing}>
                     {publishing ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
                   </IconButton>
