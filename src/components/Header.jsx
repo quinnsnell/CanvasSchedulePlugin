@@ -50,14 +50,14 @@ export default function Header({
                 ? `Showing ${filteredDays.length} of ${allDays.length} days`
                 : `${allDays.length} meetings`}
             </div>
-            {state.setup.startDate && state.setup.endDate && (
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
-                {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)}
-              </div>
-            )}
             {state.setup.classDays?.length > 0 && (
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
                 {state.setup.classDays.map((c) => DAY_FULL[c]).join(', ')}
+              </div>
+            )}
+            {state.setup.startDate && state.setup.endDate && (
+              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.12em', color: T.muted, marginTop: 2 }}>
+                {fmtFull(state.setup.startDate)} → {fmtFull(state.setup.endDate)}
               </div>
             )}
             {!isStudent && (
