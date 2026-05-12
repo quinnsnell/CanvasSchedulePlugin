@@ -7,19 +7,116 @@
  * - EmptyState: onboarding prompt for new users
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   X, RefreshCw, Check, AlertCircle, AlertTriangle, Cloud, Calendar, Settings,
-  ChevronLeft, ChevronRight, Upload, Download,
+  ChevronLeft, ChevronRight, Upload, Download, Copy,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
 import { DAY_CODES, DAY_SHORT, parseICal, parseCSV } from '../utils.js';
 import { CORS_PROXY, CORS_PROXY_DEFAULT, getCorsProxy, setCorsProxy } from '../canvas-api.js';
 import { Field, IconButton, ActionButton, inputStyle, iconBtnStyle } from './ui.jsx';
 
+// ── Clone warnings (shown inside the completed status block) ────
+
+function CloneWarnings({ warnings }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Group by kind for the summary.
+  const byKind = {};
+  warnings.forEach((w) => {
+    byKind[w.kind] = byKind[w.kind] || [];
+    byKind[w.kind].push(w);
+  });
+
+  const summaryLine = (kind, group) => {
+    if (kind === 'unmatched-assignment') {
+      return `${group.length} assignment${group.length === 1 ? '' : 's'} could not be re-linked (title not found in target course)`;
+    }
+    if (kind === 'unmatched-link') {
+      const totals = group
+        .map((w) => `${w.count} ${w.type.replace(/_/g, ' ')}`)
+        .join(', ');
+      return `Broken embedded link${group.length === 1 && group[0].count === 1 ? '' : 's'} in notes: ${totals}`;
+    }
+    if (kind === 'title-collision') {
+      return `${group.length} title collision${group.length === 1 ? '' : 's'} in source course — relink may have picked the wrong assignment`;
+    }
+    if (kind === 'date-push-failed') {
+      return `${group.length} Canvas due date${group.length === 1 ? '' : 's'} could not be synced`;
+    }
+    if (kind === 'ambiguous-file') {
+      return `${group.length} file${group.length === 1 ? '' : 's'} had multiple matches in the new course — embedded links may point to the wrong copy; verify by hand`;
+    }
+    return `${group.length} ${kind}`;
+  };
+
+  const detailFor = (kind, group) => {
+    if (kind === 'unmatched-assignment') {
+      return group.map((w) => w.title).join(', ');
+    }
+    if (kind === 'unmatched-link') {
+      return group.map((w) => `${w.type} (×${w.count})`).join(', ');
+    }
+    if (kind === 'title-collision') {
+      return group.map((w) => `"${w.title}" (×${w.count})`).join(', ');
+    }
+    if (kind === 'date-push-failed') {
+      return group.map((w) => `"${w.title}" — ${w.error}`).join('; ');
+    }
+    if (kind === 'ambiguous-file') {
+      return group.map((w) => `"${w.filename}" (${w.candidates} matches)`).join(', ');
+    }
+    return JSON.stringify(group);
+  };
+
+  return (
+    <div style={{
+      display: 'block', marginTop: 8, padding: 8, borderRadius: 3,
+      background: T.errorBg, border: `1px solid ${T.errorBorder}`, color: T.ox,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+        <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600 }}>
+            {warnings.length} issue{warnings.length === 1 ? '' : 's'} to review:
+          </div>
+          <ul style={{ margin: '4px 0 0', paddingLeft: 16, lineHeight: 1.5 }}>
+            {Object.entries(byKind).map(([kind, group]) => (
+              <li key={kind}>{summaryLine(kind, group)}</li>
+            ))}
+          </ul>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              marginTop: 6, padding: 0, background: 'none', border: 'none',
+              color: T.ox, fontFamily: FONT_MONO, fontSize: '11px',
+              textDecoration: 'underline', cursor: 'pointer',
+            }}>
+            {expanded ? 'Hide details' : 'Show details'}
+          </button>
+          {expanded && (
+            <div style={{
+              marginTop: 6, padding: 6, fontFamily: FONT_MONO, fontSize: '11px',
+              background: T.paper, color: T.ink, borderRadius: 2,
+              maxHeight: 200, overflow: 'auto',
+            }}>
+              {Object.entries(byKind).map(([kind, group]) => (
+                <div key={kind} style={{ marginBottom: 4 }}>
+                  <strong>{kind}:</strong> {detailFor(kind, group)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Setup Panel ────────────────────────────────────────────────
 
-export function SetupPanel({ state, updateState, onImport, onExportTemplate, onImportTemplate, onConnect, onRefresh, refreshing, onSwitchCourse, onClose }) {
+export function SetupPanel({ state, updateState, onImport, onExportTemplate, onImportTemplate, onConnect, onRefresh, refreshing, onSwitchCourse, onCloneCourse, onClose }) {
   const [title, setTitle] = useState(state.setup.courseTitle);
   const [start, setStart] = useState(state.setup.startDate);
   const [end, setEnd] = useState(state.setup.endDate);
@@ -31,6 +128,12 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
   const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
   const [busy, setBusy] = useState(false);
   const [canvasStatus, setCanvasStatus] = useState(null);
+
+  // Clone-course state
+  const [cloneSource, setCloneSource] = useState('');
+  const [cloneStatus, setCloneStatus] = useState(null);
+  // { running, state: 'queued'|'running'|'completed'|'failed'|'stopped', completion, elapsedSec, error? }
+  const cloneStopRef = useRef(false);
 
   const toggleDay = (c) =>
     setDays((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
@@ -69,6 +172,44 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
     const trimmed = val.trim().replace(/\/+$/, '');
     try { localStorage.setItem('planner-cors-proxy', trimmed); } catch {}
     setCorsProxy(trimmed || getCorsProxy());
+  };
+
+  const doClone = async () => {
+    if (!cloneSource || !onCloneCourse) return;
+    const targetName = state.canvas.courses.find((c) => String(c.id) === String(state.canvas.courseId))?.name || 'this course';
+    const sourceName = state.canvas.courses.find((c) => String(c.id) === String(cloneSource))?.name || 'the source course';
+    if (!window.confirm(
+      `Copy all content (assignments, quizzes, files, modules, pages) from\n\n` +
+      `  ${sourceName}\n\ninto\n\n  ${targetName}?\n\n` +
+      `Canvas runs the copy server-side. Existing content in the target is preserved (additive).`
+    )) return;
+    cloneStopRef.current = false;
+    setCloneStatus({ running: true, state: 'queued', completion: 0, elapsedSec: 0 });
+    const result = await onCloneCourse(
+      cloneSource,
+      (p) => setCloneStatus({ running: true, ...p }),
+      () => cloneStopRef.current,
+    );
+    if (result.ok) {
+      setCloneStatus({
+        running: false, state: 'completed', completion: 100,
+        schedule: result.schedule,
+      });
+    } else if (result.stopped) {
+      setCloneStatus({ running: false, state: 'stopped' });
+    } else {
+      setCloneStatus({ running: false, state: 'failed', error: result.error });
+    }
+  };
+
+  const stopClonePolling = () => { cloneStopRef.current = true; };
+
+  const fmtElapsed = (sec) => {
+    if (!sec) return '0s';
+    if (sec < 60) return `${sec}s`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
   };
 
   const doConnect = async () => {
@@ -200,6 +341,139 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
               </span>
             </div>
           )}
+
+          {/* ── Clone from another course (Canvas course copy) ── */}
+          {state.canvas.connected && state.canvas.courseId && onCloneCourse && (() => {
+            const targetCourse = state.canvas.courses.find((c) => String(c.id) === String(state.canvas.courseId));
+            const targetName = targetCourse?.name || 'current course';
+            return (
+            <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px dashed ${T.border}` }}>
+              <h4 style={{ fontFamily: FONT_DISPLAY, fontSize: '14px', fontWeight: 600, marginBottom: 4 }}>
+                <Copy size={13} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+                Copy content from another course
+              </h4>
+              <p style={{ color: T.muted, fontSize: '12px', marginBottom: 12, maxWidth: 760 }}>
+                Two-step copy: (1) Canvas's native course copy duplicates assignments, quizzes, files, modules, pages, and discussions on the server side;
+                (2) the source course's planner schedule (notes, modules, holidays, item placement) is pulled and re-mapped onto this semester's dates,
+                with assignment cards re-linked to the new Canvas IDs by title. Existing content is preserved (additive).
+              </p>
+              <div style={{
+                fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 8,
+              }}>
+                Copy into: <span style={{ color: T.ink, fontWeight: 600 }}>{targetName}</span>
+                {' '}<span style={{ color: T.muted }}>(switch the course picker above to change)</span>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <select
+                  value={cloneSource}
+                  onChange={(e) => setCloneSource(e.target.value)}
+                  disabled={cloneStatus?.running}
+                  style={{ ...inputStyle(), width: 'auto', minWidth: 240 }}>
+                  <option value="">— copy from… —</option>
+                  {state.canvas.courses
+                    .filter((c) => String(c.id) !== String(state.canvas.courseId))
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                </select>
+                <ActionButton
+                  onClick={doClone}
+                  disabled={!cloneSource || cloneStatus?.running}
+                  primary>
+                  {cloneStatus?.running
+                    ? <RefreshCw size={14} className="animate-spin" />
+                    : <Copy size={14} />}
+                  {cloneStatus?.running ? 'Copying…' : 'Copy content'}
+                </ActionButton>
+                {cloneStatus?.running && (
+                  <ActionButton onClick={stopClonePolling}>Stop checking</ActionButton>
+                )}
+              </div>
+              {cloneStatus && (
+                <div style={{
+                  marginTop: 12, padding: 10, borderRadius: 3, fontSize: '12px',
+                  background: cloneStatus.state === 'failed' ? T.errorBg
+                    : cloneStatus.state === 'completed' ? T.successBg
+                    : T.subtle,
+                  border: `1px solid ${
+                    cloneStatus.state === 'failed' ? T.errorBorder
+                    : cloneStatus.state === 'completed' ? T.successBorder
+                    : T.border}`,
+                  color: cloneStatus.state === 'failed' ? T.ox
+                    : cloneStatus.state === 'completed' ? T.forest
+                    : T.ink,
+                }}>
+                  {cloneStatus.state === 'failed' && (
+                    <span><AlertCircle size={12} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+                      Copy failed: {cloneStatus.error}</span>
+                  )}
+                  {cloneStatus.state === 'completed' && (() => {
+                    const sch = cloneStatus.schedule;
+                    if (!sch || !sch.hadSource) {
+                      return (
+                        <span>
+                          <Check size={12} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+                          Canvas content copied. No saved planner schedule was found for the source course —
+                          click Refresh above to load the new assignments unscheduled.
+                        </span>
+                      );
+                    }
+                    const truncated = sch.sourceTotalDays > sch.mappedDays;
+                    const extraSuffix = sch.extraDays
+                      ? ` plus ${sch.extraDays} extra day${sch.extraDays === 1 ? '' : 's'}`
+                      : '';
+                    const rewriteSuffix = sch.rewrittenNotes
+                      ? ` ${sch.rewrittenNotes} note${sch.rewrittenNotes === 1 ? '' : 's'} had embedded links rewritten.`
+                      : '';
+                    const datesSuffix = sch.datePushed
+                      ? ` ${sch.datePushed} Canvas due date${sch.datePushed === 1 ? '' : 's'} synced to the planner.`
+                      : '';
+                    return (
+                      <span>
+                        <Check size={12} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+                        Copy complete: imported <strong>{sch.itemCount}</strong> planner items
+                        across <strong>{sch.mappedDays}</strong> teaching days{extraSuffix}
+                        {' '}({sch.relinked} assignment{sch.relinked === 1 ? '' : 's'} re-linked to the new course).
+                        {rewriteSuffix && <span> {rewriteSuffix}</span>}
+                        {datesSuffix && <span> {datesSuffix}</span>}
+                        {truncated && (
+                          <span style={{ display: 'block', marginTop: 4, color: T.ox }}>
+                            Source semester had {sch.sourceTotalDays} teaching days but this one only has {sch.mappedDays} —
+                            items past the end were dropped.
+                          </span>
+                        )}
+                        {sch.droppedExtras > 0 && (
+                          <span style={{ display: 'block', marginTop: 4, color: T.ox }}>
+                            {sch.droppedExtras} extra day{sch.droppedExtras === 1 ? '' : 's'} fell outside the new semester window and were skipped.
+                          </span>
+                        )}
+                        {sch.warnings && sch.warnings.length > 0 && (
+                          <CloneWarnings warnings={sch.warnings} />
+                        )}
+                      </span>
+                    );
+                  })()}
+                  {cloneStatus.state === 'stopped' && (
+                    <span>
+                      Stopped polling. The copy is still running on Canvas — check the destination course directly,
+                      or click Refresh once it has finished.
+                    </span>
+                  )}
+                  {cloneStatus.running && cloneStatus.state !== 'failed' && cloneStatus.state !== 'completed' && (
+                    <span style={{ fontFamily: FONT_MONO }}>
+                      {cloneStatus.state === 'pushing-dates'
+                        ? `Pushing due dates to Canvas: ${cloneStatus.done || 0}/${cloneStatus.total || 0} (throttled to avoid rate limits)`
+                        : cloneStatus.state === 'syncing'
+                          ? 'Canvas copy done — building remap and merging planner schedule…'
+                          : `Still running — ${cloneStatus.state || 'starting'}, ${Math.round(cloneStatus.completion || 0)}%`}
+                      {' · '}elapsed {fmtElapsed(cloneStatus.elapsedSec || 0)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            );
+          })()}
         </div>
 
         {/* ── Import ── */}

@@ -156,6 +156,22 @@ export const CanvasAPI = {
   listPages: (b, t, c) =>
     canvasFetchAll(b, t, `/courses/${c}/pages?per_page=100&sort=title&published=true`),
 
+  /** List all pages including drafts (for course-copy link remap). */
+  listAllPages: (b, t, c) =>
+    canvasFetchAll(b, t, `/courses/${c}/pages?per_page=100&sort=title`),
+
+  /** List quizzes (Classic Quiz engine). New Quizzes use a separate API. */
+  listQuizzes: (b, t, c) =>
+    canvasFetchAll(b, t, `/courses/${c}/quizzes?per_page=100`),
+
+  /** List modules in a course. */
+  listModules: (b, t, c) =>
+    canvasFetchAll(b, t, `/courses/${c}/modules?per_page=100`),
+
+  /** List discussion topics in a course. */
+  listDiscussionTopics: (b, t, c) =>
+    canvasFetchAll(b, t, `/courses/${c}/discussion_topics?per_page=100`),
+
   /** Update an assignment's due date. */
   setDueDate: (b, t, c, a, dueAtISO) =>
     canvasFetch(b, t, `/courses/${c}/assignments/${a}`, {
@@ -262,6 +278,46 @@ export const CanvasAPI = {
     if (!file) return null;
     const meta = await canvasFetch(baseUrl, token, `/files/${file.id}/public_url`);
     return meta.public_url;
+  },
+
+  /**
+   * Trigger a server-side Canvas course copy. Canvas copies assignments,
+   * quizzes, files, modules, pages, discussions, and rubrics from
+   * sourceCourseId into targetCourseId, rewriting internal IDs and
+   * embedded links. Returns the migration record (includes progress_url).
+   *
+   * The copy is additive — existing content in the target is preserved.
+   *
+   * `dateShiftOptions` (optional): when provided, Canvas redistributes due
+   * dates from the source semester window into the target window. Shape:
+   *   { shift_dates: true, old_start_date, old_end_date,
+   *     new_start_date, new_end_date }
+   * Without it, copied items keep their original (source-semester) dates.
+   */
+  cloneCourseContent: (baseUrl, token, targetCourseId, sourceCourseId, dateShiftOptions = null) => {
+    const body = {
+      migration_type: 'course_copy_importer',
+      settings: { source_course_id: sourceCourseId },
+    };
+    if (dateShiftOptions) body.date_shift_options = dateShiftOptions;
+    return canvasFetch(baseUrl, token, `/courses/${targetCourseId}/content_migrations`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  /**
+   * Poll a Canvas progress URL (absolute URL returned by content_migrations).
+   * Returns `{ workflow_state: 'queued'|'running'|'completed'|'failed', completion: 0..100, message? }`.
+   */
+  async getProgress(baseUrl, token, progressUrl) {
+    const url = proxyUrl(progressUrl, baseUrl);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Progress ${res.status}: ${text.slice(0, 180) || res.statusText}`);
+    }
+    return res.json();
   },
 
   /** Create or update a Canvas Page with the given title and HTML body. */

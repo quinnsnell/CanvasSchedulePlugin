@@ -15,6 +15,9 @@ import {
   fmtMonthDay,
   fmtFull,
   generateICal,
+  exportTemplate,
+  importTemplate,
+  rewriteEmbeddedLinks,
   Store,
 } from '../utils.js';
 
@@ -484,5 +487,168 @@ describe('Store', () => {
 describe('PENDING_TTL_MS', () => {
   it('equals 1 hour in milliseconds', () => {
     expect(PENDING_TTL_MS).toBe(3600000);
+  });
+});
+
+// ── rewriteEmbeddedLinks ─────────────────────────────────────────
+
+describe('rewriteEmbeddedLinks', () => {
+  it('rewrites course ID in matching paths', () => {
+    const html = '<a href="/courses/100/files/55">PDF</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', { files: { '55': '999' } });
+    expect(out).toBe('<a href="/courses/200/files/999">PDF</a>');
+  });
+
+  it('preserves inner ID when remap has no entry for it', () => {
+    const html = '<a href="/courses/100/pages/week-one">Week 1</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', { pages: {} });
+    expect(out).toBe('<a href="/courses/200/pages/week-one">Week 1</a>');
+  });
+
+  it('rewrites multiple resource types in one pass', () => {
+    const html =
+      '<a href="/courses/100/assignments/1">A</a> ' +
+      '<a href="/courses/100/quizzes/2">Q</a> ' +
+      '<a href="/courses/100/files/3">F</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', {
+      assignments: { '1': '11' },
+      quizzes: { '2': '22' },
+      files: { '3': '33' },
+    });
+    expect(out).toContain('/courses/200/assignments/11');
+    expect(out).toContain('/courses/200/quizzes/22');
+    expect(out).toContain('/courses/200/files/33');
+  });
+
+  it('handles absolute URLs with protocol and host', () => {
+    const html = '<a href="https://canvas.example.com/courses/100/files/55">f</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', { files: { '55': '999' } });
+    expect(out).toBe('<a href="https://canvas.example.com/courses/200/files/999">f</a>');
+  });
+
+  it('does not touch URLs for a different source course', () => {
+    const html = '<a href="/courses/777/files/55">other</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', { files: { '55': '999' } });
+    expect(out).toBe(html);
+  });
+
+  it('is idempotent on already-rewritten HTML', () => {
+    const html = '<a href="/courses/200/files/999">PDF</a>';
+    const out = rewriteEmbeddedLinks(html, '100', '200', { files: { '55': '999' } });
+    expect(out).toBe(html);
+  });
+
+  it('handles null/empty html gracefully', () => {
+    expect(rewriteEmbeddedLinks('', '100', '200', {})).toBe('');
+    expect(rewriteEmbeddedLinks(null, '100', '200', {})).toBe(null);
+    expect(rewriteEmbeddedLinks(undefined, '100', '200', {})).toBe(undefined);
+  });
+
+  it('returns input unchanged when course IDs are missing', () => {
+    const html = '<a href="/courses/100/files/55">f</a>';
+    expect(rewriteEmbeddedLinks(html, null, '200', {})).toBe(html);
+    expect(rewriteEmbeddedLinks(html, '100', null, {})).toBe(html);
+  });
+
+  it('invokes onUnmatched only for IDs missing from the remap', () => {
+    const html =
+      '<a href="/courses/100/files/55">a</a>' +
+      '<a href="/courses/100/files/77">b</a>';
+    const unmatched = [];
+    rewriteEmbeddedLinks(html, '100', '200',
+      { files: { '55': '999' } },
+      (info) => unmatched.push(info));
+    expect(unmatched).toEqual([{ type: 'files', id: '77' }]);
+  });
+
+  it('invokes onUnmatched per occurrence (no de-dup)', () => {
+    const html = '<a href="/courses/100/files/77">a</a><a href="/courses/100/files/77">b</a>';
+    const unmatched = [];
+    rewriteEmbeddedLinks(html, '100', '200', { files: {} }, (info) => unmatched.push(info));
+    expect(unmatched).toHaveLength(2);
+  });
+});
+
+// ── exportTemplate / importTemplate (extraDays round-trip) ───────
+
+describe('exportTemplate + importTemplate (extraDays)', () => {
+  // 3-week semester, MWF.
+  const sourceSetup = {
+    courseTitle: 'Source',
+    startDate: '2026-01-05', // Monday
+    endDate: '2026-01-23',
+    classDays: ['MO', 'WE', 'FR'],
+  };
+
+  it('round-trips an extra day with items, holiday label, and module', () => {
+    const sourceState = {
+      setup: sourceSetup,
+      items: {
+        n1: { id: 'n1', type: 'rich', html: '<p>Make-up reading</p>' },
+      },
+      schedule: { '2026-01-13': ['n1'] }, // Tuesday — not a teaching day
+      extraDays: ['2026-01-13'],
+      unscheduled: [],
+      holidays: { '2026-01-13': 'Make-up class' },
+      modules: { '2026-01-13': 'Bonus unit' },
+    };
+    const template = exportTemplate(sourceState);
+    expect(template.extraSlots).toHaveLength(1);
+    expect(template.extraSlots[0].daysFromStart).toBe(8); // Jan 5 → Jan 13
+    expect(template.extraSlots[0].holiday).toBe('Make-up class');
+    expect(template.extraSlots[0].module).toBe('Bonus unit');
+    expect(template.extraSlots[0].items).toHaveLength(1);
+    expect(template.extraSlots[0].items[0].html).toContain('Make-up reading');
+
+    // New semester starts on a different Monday — extra day should land
+    // 8 days later: Aug 24 + 8 = Sep 1 (a Tuesday, still not a teaching day).
+    const newSetup = {
+      courseTitle: 'Target',
+      startDate: '2026-08-24',
+      endDate: '2026-09-11',
+      classDays: ['MO', 'WE', 'FR'],
+    };
+    const result = importTemplate(template, newSetup);
+    expect(result.extraDays).toContain('2026-09-01');
+    expect(result.holidays['2026-09-01']).toBe('Make-up class');
+    expect(result.modules['2026-09-01']).toBe('Bonus unit');
+    const placedIds = result.schedule['2026-09-01'] || [];
+    expect(placedIds).toHaveLength(1);
+    expect(result.items[placedIds[0]].html).toContain('Make-up reading');
+  });
+
+  it('drops extra days that fall outside the new semester window', () => {
+    const sourceState = {
+      setup: sourceSetup,
+      items: { n1: { id: 'n1', type: 'rich', html: '<p>x</p>' } },
+      schedule: { '2026-01-30': ['n1'] }, // 25 days after start — past source end, but exportTemplate still records the offset
+      extraDays: ['2026-01-30'],
+      unscheduled: [],
+      holidays: {},
+      modules: {},
+    };
+    const template = exportTemplate(sourceState);
+    expect(template.extraSlots).toHaveLength(1);
+
+    // New semester only spans 1 week — offset of 25 days lands outside it.
+    const newSetup = { ...sourceSetup, startDate: '2026-08-24', endDate: '2026-08-30' };
+    const result = importTemplate(template, newSetup);
+    expect(result.droppedExtras).toBe(1);
+    expect(result.extraDays).toHaveLength(0);
+  });
+
+  it('does not duplicate teaching-day entries into extraSlots', () => {
+    const sourceState = {
+      setup: sourceSetup,
+      items: { a1: { id: 'a1', type: 'assign', title: 'HW1' } },
+      schedule: { '2026-01-05': ['a1'] }, // Monday — a teaching day
+      extraDays: ['2026-01-05'], // mistakenly listed (defensive)
+      unscheduled: [],
+      holidays: {},
+      modules: {},
+    };
+    const template = exportTemplate(sourceState);
+    expect(template.extraSlots).toHaveLength(0);
+    expect(template.slots.some((s) => s.items.some((i) => i.title === 'HW1'))).toBe(true);
   });
 });

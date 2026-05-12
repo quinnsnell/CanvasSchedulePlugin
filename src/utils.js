@@ -293,6 +293,40 @@ function normalizeDate(str) {
   return null;
 }
 
+// ── Embedded Canvas link rewriting ────────────────────────────
+
+/**
+ * Rewrite Canvas course-resource URLs embedded in HTML so they point at the
+ * target course's resources after a course copy. Matches paths of the form:
+ *
+ *   /courses/<sourceCourseId>/<type>/<idOrSlug>
+ *
+ * where `<type>` is one of: assignments, quizzes, files, pages, modules,
+ * discussion_topics, module_items.
+ *
+ * `remap` is `{ [type]: { [oldId]: newId } }`. Any inner ID that isn't
+ * present in the remap is preserved (helpful for pages, whose slugs Canvas
+ * preserves across course copies, and for files/assignments we don't have
+ * a name match for).
+ *
+ * Pure function — accepts/returns a string. Idempotent for already-rewritten
+ * URLs (since `sourceCourseId` won't appear in them anymore).
+ */
+export function rewriteEmbeddedLinks(html, sourceCourseId, targetCourseId, remap, onUnmatched) {
+  if (!html || !sourceCourseId || !targetCourseId) return html;
+  const types = 'assignments|quizzes|files|pages|modules|discussion_topics|module_items';
+  const pattern = new RegExp(
+    `/courses/${sourceCourseId}/(${types})/([^"'\\s/?#]+)`,
+    'g'
+  );
+  return html.replace(pattern, (_match, type, idOrSlug) => {
+    const map = (remap && remap[type]) || {};
+    const newId = map[idOrSlug];
+    if (!newId && onUnmatched) onUnmatched({ type, id: idOrSlug });
+    return `/courses/${targetCourseId}/${type}/${newId || idOrSlug}`;
+  });
+}
+
 // ── Persistence ────────────────────────────────────────────────
 
 const KEY_PREFIX = 'class-planner-v3';
@@ -309,23 +343,22 @@ const KEY_META = 'class-planner-meta';
  */
 export function exportTemplate(state) {
   const teachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
+  const teachingSet = new Set(teachingDays);
 
-  // Map each date to its teaching-day index (0-based)
-  const dateToIndex = {};
-  teachingDays.forEach((d, i) => { dateToIndex[d] = i; });
+  const stripItem = (id) => {
+    const item = state.items[id];
+    if (!item) return null;
+    // Strip Canvas-specific IDs — they belong to the old course
+    const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
+    return rest;
+  };
 
   // Convert schedule: date → [itemIds]  →  teachingDayIndex → [items]
   const slots = [];
   teachingDays.forEach((date, idx) => {
     const ids = state.schedule[date] || [];
     if (ids.length === 0 && !state.holidays[date] && !state.modules[date]) return;
-    const items = ids.map((id) => {
-      const item = state.items[id];
-      if (!item) return null;
-      // Strip Canvas-specific IDs — they belong to the old course
-      const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
-      return rest;
-    }).filter(Boolean);
+    const items = ids.map(stripItem).filter(Boolean);
     slots.push({
       index: idx,
       dayCode: DAY_CODES[new Date(date + 'T12:00:00').getDay()],
@@ -335,13 +368,31 @@ export function exportTemplate(state) {
     });
   });
 
+  // Extra days (manually added non-teaching days — make-ups, guest lectures, etc.).
+  // Encoded by their offset in days from the semester start so they re-map to
+  // the same relative position in any new semester.
+  const startStr = state.setup.startDate;
+  const dayOffset = (date) => {
+    const ms = new Date(date + 'T00:00:00').getTime() - new Date(startStr + 'T00:00:00').getTime();
+    return Math.round(ms / 86400000);
+  };
+  const extraSlots = [];
+  (state.extraDays || []).forEach((date) => {
+    if (teachingSet.has(date)) return; // already in slots
+    const ids = state.schedule[date] || [];
+    if (ids.length === 0 && !state.holidays[date] && !state.modules[date]) return;
+    const items = ids.map(stripItem).filter(Boolean);
+    extraSlots.push({
+      daysFromStart: dayOffset(date),
+      dayCode: DAY_CODES[new Date(date + 'T12:00:00').getDay()],
+      items,
+      holiday: state.holidays[date] || null,
+      module: state.modules[date] || null,
+    });
+  });
+
   // Unscheduled items (readings, notes not on any day)
-  const unscheduledItems = (state.unscheduled || []).map((id) => {
-    const item = state.items[id];
-    if (!item) return null;
-    const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
-    return rest;
-  }).filter(Boolean);
+  const unscheduledItems = (state.unscheduled || []).map(stripItem).filter(Boolean);
 
   return {
     version: 1,
@@ -350,6 +401,7 @@ export function exportTemplate(state) {
     classDays: state.setup.classDays,
     totalTeachingDays: teachingDays.length,
     slots,
+    extraSlots,
     unscheduledItems,
   };
 }
@@ -361,18 +413,47 @@ export function exportTemplate(state) {
  */
 export function importTemplate(template, setup) {
   const newTeachingDays = generateClassDays(setup.startDate, setup.endDate, setup.classDays);
+  const teachingSet = new Set(newTeachingDays);
+  const lastTeachingDate = newTeachingDays[newTeachingDays.length - 1];
+  const semesterEndStr = setup.endDate || lastTeachingDate;
 
   const items = {};
   const schedule = {};
   const holidays = {};
   const modules = {};
   const unscheduled = [];
+  const extraDays = [];
+  let droppedExtras = 0;
 
   // Place items by teaching-day index
   template.slots.forEach((slot) => {
     if (slot.index >= newTeachingDays.length) return; // semester too short
     const date = newTeachingDays[slot.index];
 
+    if (slot.holiday) holidays[date] = slot.holiday;
+    if (slot.module) modules[date] = slot.module;
+
+    schedule[date] = schedule[date] || [];
+    slot.items.forEach((itemData) => {
+      const id = uid();
+      items[id] = { ...itemData, id, dueDate: date };
+      schedule[date].push(id);
+    });
+  });
+
+  // Extra (non-teaching) days, mapped by relative offset from semester start.
+  // Items land on the resulting calendar date even if it isn't a teaching day —
+  // that's the whole point of an extra day. Skip if the offset lands outside
+  // the new semester window.
+  (template.extraSlots || []).forEach((slot) => {
+    const date = addDays(setup.startDate, slot.daysFromStart);
+    if (date < setup.startDate || date > semesterEndStr) {
+      droppedExtras += 1;
+      return;
+    }
+    if (!teachingSet.has(date) && !extraDays.includes(date)) {
+      extraDays.push(date);
+    }
     if (slot.holiday) holidays[date] = slot.holiday;
     if (slot.module) modules[date] = slot.module;
 
@@ -391,7 +472,7 @@ export function importTemplate(template, setup) {
     unscheduled.push(id);
   });
 
-  return { items, schedule, holidays, modules, unscheduled, extraDays: [] };
+  return { items, schedule, holidays, modules, unscheduled, extraDays, droppedExtras };
 }
 
 /**

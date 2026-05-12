@@ -20,7 +20,7 @@ import {
   DAY_CODES, PENDING_TTL_MS, uid,
   generateClassDays, computeAllDays,
   weekNumber, addDays, fmtMonthDay,
-  localDateStr, generateICal, exportTemplate, importTemplate, Store,
+  localDateStr, generateICal, exportTemplate, importTemplate, rewriteEmbeddedLinks, Store,
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
 import renderScheduleHtml from './render-schedule-html.js';
@@ -655,10 +655,14 @@ export default function ClassPlannerApp() {
           s.holidays = { ...s.holidays, ...result.holidays };
           s.modules = { ...s.modules, ...result.modules };
           s.unscheduled = [...s.unscheduled, ...result.unscheduled];
+          const existingExtras = new Set(s.extraDays || []);
+          (result.extraDays || []).forEach((d) => existingExtras.add(d));
+          s.extraDays = [...existingExtras];
           return s;
         });
         const itemCount = Object.keys(result.items).length;
-        showToast(`Imported template: ${itemCount} items across ${mapped} days`);
+        const extraNote = result.extraDays?.length ? `, +${result.extraDays.length} extra day${result.extraDays.length === 1 ? '' : 's'}` : '';
+        showToast(`Imported template: ${itemCount} items across ${mapped} days${extraNote}`);
       } catch (err) {
         showToast(`Failed to import template: ${err.message}`, 'err');
       }
@@ -1075,6 +1079,390 @@ export default function ClassPlannerApp() {
     setRefreshing(false);
   };
 
+  /**
+   * Load a course's planner state from local storage if present, otherwise
+   * try to download the schedule JSON the instructor previously published
+   * to that course's Canvas Files. Returns null if neither is available.
+   */
+  const loadSourcePlannerState = async (sourceCourseId, baseUrl, token) => {
+    try {
+      const local = await Store.load(sourceCourseId);
+      if (local && local.items && local.setup) return local;
+    } catch {}
+    try {
+      const remote = await CanvasAPI.downloadSchedule(baseUrl, token, sourceCourseId);
+      if (remote && remote.items && remote.setup) return remote;
+    } catch {}
+    return null;
+  };
+
+  /**
+   * Build oldId → newId maps for each Canvas content type by listing both
+   * the source and target courses and matching items by name. Pages match
+   * by URL slug (which Canvas's course copy preserves).
+   *
+   * Files use a refined matching scheme: first try (display_name, size),
+   * fall back to display_name alone. If multiple target files match a
+   * single source file, pick the first but record an ambiguity warning —
+   * Canvas may have renamed the copied file due to a name conflict in
+   * the target's files area.
+   *
+   * Returns `{ remap, ambiguousFiles }` where ambiguousFiles is an array
+   * of `{ filename, candidates }` for the panel to surface.
+   *
+   * Any single fetch that fails returns an empty map for that type rather
+   * than aborting — rewriteEmbeddedLinks preserves unmapped inner IDs.
+   */
+  const buildLinkRemap = async (baseUrl, token, sourceId, targetId) => {
+    const types = [
+      { key: 'assignments',       api: 'listAssignments',       nameField: 'name',  idField: 'id' },
+      { key: 'quizzes',           api: 'listQuizzes',           nameField: 'title', idField: 'id' },
+      { key: 'pages',             api: 'listAllPages',          nameField: 'url',   idField: 'url' },
+      { key: 'modules',           api: 'listModules',           nameField: 'name',  idField: 'id' },
+      { key: 'discussion_topics', api: 'listDiscussionTopics',  nameField: 'title', idField: 'id' },
+    ];
+    const remap = {};
+    const ambiguousFiles = [];
+
+    await Promise.all([
+      // Standard name-based matching for non-file types.
+      ...types.map(async (t) => {
+        let src = []; let tgt = [];
+        try { src = await CanvasAPI[t.api](baseUrl, token, sourceId); } catch {}
+        try { tgt = await CanvasAPI[t.api](baseUrl, token, targetId); } catch {}
+        const tgtByName = {};
+        tgt.forEach((it) => {
+          if (it[t.nameField]) tgtByName[it[t.nameField]] = String(it[t.idField]);
+        });
+        const map = {};
+        src.forEach((it) => {
+          const name = it[t.nameField];
+          const oldId = String(it[t.idField]);
+          const newId = name ? tgtByName[name] : null;
+          if (newId) map[oldId] = newId;
+        });
+        remap[t.key] = map;
+      }),
+
+      // Files: (display_name, size) match first, then display_name only.
+      // Records ambiguous matches so the user can verify links by hand.
+      (async () => {
+        let src = []; let tgt = [];
+        try { src = await CanvasAPI.listFiles(baseUrl, token, sourceId); } catch {}
+        try { tgt = await CanvasAPI.listFiles(baseUrl, token, targetId); } catch {}
+
+        const tgtBySizedName = {};
+        const tgtByName = {};
+        tgt.forEach((f) => {
+          const sized = `${f.display_name}|${f.size}`;
+          if (!tgtBySizedName[sized]) tgtBySizedName[sized] = [];
+          tgtBySizedName[sized].push(f);
+          if (!tgtByName[f.display_name]) tgtByName[f.display_name] = [];
+          tgtByName[f.display_name].push(f);
+        });
+
+        const map = {};
+        src.forEach((f) => {
+          const sized = `${f.display_name}|${f.size}`;
+          let candidates = tgtBySizedName[sized] || tgtByName[f.display_name] || [];
+          if (candidates.length === 1) {
+            map[String(f.id)] = String(candidates[0].id);
+          } else if (candidates.length > 1) {
+            // Multiple matches — pick first deterministically and warn.
+            map[String(f.id)] = String(candidates[0].id);
+            ambiguousFiles.push({ filename: f.display_name, candidates: candidates.length });
+          }
+          // else: no match — leave unmapped; rewriteEmbeddedLinks will count it.
+        });
+        remap.files = map;
+      })(),
+    ]);
+
+    return { remap, ambiguousFiles };
+  };
+
+  /**
+   * After a Canvas course copy finishes, pull the source course's planner
+   * state (notes, modules, holidays, item placement, extra days) and re-map
+   * it onto the current semester's dates via exportTemplate/importTemplate.
+   * Re-links assignment items to the new Canvas IDs by title, rewrites
+   * /courses/<src>/<type>/<id> links inside rich-note HTML, and pushes the
+   * planner's authoritative dates back to Canvas (overriding Canvas's own
+   * date-shift output).
+   *
+   * Collects per-issue warnings: unmatched assignments, unmatched embedded
+   * links (per type), source-side title collisions, date-push failures.
+   *
+   * Returns `{ hadSource, itemCount, relinked, rewrittenNotes, extraDays,
+   * mappedDays, sourceTotalDays, droppedExtras, datePushed,
+   * datePushFailed, warnings }`. `warnings` is an array of
+   * `{ kind, ...details }` objects.
+   */
+  const importScheduleFromSource = async (sourceCourseId, sourceState, onProgress) => {
+    const s = stateRef.current;
+    if (!sourceState) return { hadSource: false };
+
+    // Convert source state to relative-position template, then map onto
+    // the current setup's dates.
+    const template = exportTemplate(sourceState);
+    const result = importTemplate(template, s.setup);
+    const warnings = [];
+
+    // Build the embedded-link remap and the target's assignment list in
+    // parallel.
+    const [remapResult, assignmentList] = await Promise.all([
+      buildLinkRemap(s.canvas.baseUrl, s.canvas.token, sourceCourseId, s.canvas.courseId),
+      CanvasAPI.listAssignments(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId).catch(() => []),
+    ]);
+    const linkRemap = remapResult.remap;
+    (remapResult.ambiguousFiles || []).forEach((f) => {
+      warnings.push({ kind: 'ambiguous-file', filename: f.filename, candidates: f.candidates });
+    });
+
+    // Detect title collisions in the *source* assignment list — they make
+    // relink ambiguous because we match by title.
+    const sourceAssignmentList = await CanvasAPI.listAssignments(
+      s.canvas.baseUrl, s.canvas.token, sourceCourseId
+    ).catch(() => []);
+    const sourceTitleCount = {};
+    sourceAssignmentList.forEach((a) => {
+      sourceTitleCount[a.name] = (sourceTitleCount[a.name] || 0) + 1;
+    });
+    Object.entries(sourceTitleCount).forEach(([title, n]) => {
+      if (n > 1) warnings.push({ kind: 'title-collision', title, count: n });
+    });
+
+    // Relink assignment cards by title (Canvas's course copy preserves names,
+    // including for New Quizzes which appear in the assignments list).
+    const titleToNew = {};
+    assignmentList.forEach((a) => {
+      titleToNew[a.name] = { id: a.id, htmlUrl: a.html_url, groupId: a.assignment_group_id };
+    });
+
+    let relinked = 0;
+    let rewrittenNotes = 0;
+    const unmatchedLinkCounts = {}; // { [type]: count }
+    Object.values(result.items).forEach((item) => {
+      if (item.type === 'assign' && item.title) {
+        const match = titleToNew[item.title];
+        if (match) {
+          item.canvasId = match.id;
+          item.htmlUrl = match.htmlUrl;
+          if (match.groupId) item.groupId = match.groupId;
+          relinked++;
+        } else {
+          warnings.push({ kind: 'unmatched-assignment', title: item.title });
+        }
+      }
+      if (item.html) {
+        const rewritten = rewriteEmbeddedLinks(
+          item.html, sourceCourseId, s.canvas.courseId, linkRemap,
+          ({ type }) => {
+            // Pages keep their slug across course copy, so an unmapped
+            // page slug usually still resolves — don't warn about those.
+            if (type === 'pages') return;
+            unmatchedLinkCounts[type] = (unmatchedLinkCounts[type] || 0) + 1;
+          },
+        );
+        if (rewritten !== item.html) {
+          item.html = rewritten;
+          rewrittenNotes++;
+        }
+      }
+    });
+    Object.entries(unmatchedLinkCounts).forEach(([type, count]) => {
+      warnings.push({ kind: 'unmatched-link', type, count });
+    });
+
+    // Merge into current state (additive — same pattern as importSemesterTemplate).
+    updateState((cur) => {
+      cur.items = { ...cur.items, ...result.items };
+      Object.entries(result.schedule).forEach(([date, ids]) => {
+        cur.schedule[date] = [...(cur.schedule[date] || []), ...ids];
+      });
+      cur.holidays = { ...cur.holidays, ...result.holidays };
+      cur.modules = { ...cur.modules, ...result.modules };
+      cur.unscheduled = [...cur.unscheduled, ...result.unscheduled];
+      const existingExtras = new Set(cur.extraDays || []);
+      (result.extraDays || []).forEach((d) => existingExtras.add(d));
+      cur.extraDays = [...existingExtras];
+      return cur;
+    });
+
+    // Push planner-authoritative due dates back to Canvas for relinked
+    // assignments. The planner uses teaching-day-index mapping which lands
+    // items on actual class meeting days — more precise than Canvas's
+    // proportional date_shift_options output.
+    //
+    // Throttled: bounded parallelism (small batch) plus a sleep between
+    // batches, since a single course copy can produce 20-50 setDueDate
+    // calls and Canvas's per-token rate limit is shared across requests
+    // (default ~700/min). Conservative values keep us well under that
+    // even when other tabs are using the same token.
+    const DATE_PUSH_BATCH_SIZE = 5;
+    const DATE_PUSH_SLEEP_MS = 1500;
+    const toPush = Object.values(result.items).filter(
+      (it) => it.type === 'assign' && it.canvasId && it.dueDate
+    );
+    let datePushed = 0;
+    const datePushFailures = [];
+    for (let i = 0; i < toPush.length; i += DATE_PUSH_BATCH_SIZE) {
+      const batch = toPush.slice(i, i + DATE_PUSH_BATCH_SIZE);
+      await Promise.all(batch.map(async (it) => {
+        try {
+          const due = new Date(it.dueDate + 'T23:59:00').toISOString();
+          await CanvasAPI.setDueDate(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, it.canvasId, due);
+          datePushed++;
+        } catch (e) {
+          datePushFailures.push({ title: it.title, error: e.message });
+        }
+      }));
+      onProgress?.({
+        state: 'pushing-dates',
+        done: Math.min(i + DATE_PUSH_BATCH_SIZE, toPush.length),
+        total: toPush.length,
+      });
+      if (i + DATE_PUSH_BATCH_SIZE < toPush.length) {
+        await new Promise((r) => setTimeout(r, DATE_PUSH_SLEEP_MS));
+      }
+    }
+    datePushFailures.forEach((f) => warnings.push({ kind: 'date-push-failed', ...f }));
+
+    const newTeachingDays = generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays);
+    return {
+      hadSource: true,
+      itemCount: Object.keys(result.items).length,
+      relinked,
+      rewrittenNotes,
+      extraDays: (result.extraDays || []).length,
+      mappedDays: Math.min(template.totalTeachingDays, newTeachingDays.length),
+      sourceTotalDays: template.totalTeachingDays,
+      droppedExtras: result.droppedExtras || 0,
+      datePushed,
+      datePushFailed: datePushFailures.length,
+      warnings,
+    };
+  };
+
+  /**
+   * Trigger a Canvas server-side course copy from sourceCourseId into the
+   * currently selected course. Polls progress indefinitely (with backoff)
+   * until the migration reports completed/failed. Reports progress via
+   * `onProgress({ state, completion, elapsedSec })`.
+   *
+   * `shouldStop()` is checked between polls — if it returns true the loop
+   * exits with `ok: false, stopped: true`. The migration itself continues
+   * server-side regardless; this only stops our polling.
+   *
+   * On success, also pulls the source course's schedule (notes, modules,
+   * placement) and re-maps it onto the current semester. Returns the
+   * import summary in `result.schedule`.
+   */
+  const cloneCourseFrom = async (sourceCourseId, onProgress, shouldStop) => {
+    const s = stateRef.current;
+    if (!s.canvas.connected || !s.canvas.courseId) {
+      return { ok: false, error: 'Pick a target course first' };
+    }
+    if (!sourceCourseId || String(sourceCourseId) === String(s.canvas.courseId)) {
+      return { ok: false, error: 'Source must differ from current course' };
+    }
+    if (!s.setup.startDate || !s.setup.endDate) {
+      return { ok: false, error: 'Set the target semester start/end dates first' };
+    }
+
+    // Load source planner state up front so we can compute date_shift_options
+    // and have it ready for import once the migration completes. Falls back
+    // to Canvas's course.start_at/end_at if the source course has no saved
+    // planner state.
+    const sourceState = await loadSourcePlannerState(sourceCourseId, s.canvas.baseUrl, s.canvas.token);
+    const sourceCourseMeta = s.canvas.courses.find((c) => String(c.id) === String(sourceCourseId));
+    const sourceStart = sourceState?.setup?.startDate || sourceCourseMeta?.startAt?.slice(0, 10);
+    const sourceEnd = sourceState?.setup?.endDate || sourceCourseMeta?.endAt?.slice(0, 10);
+    const dateShiftOptions = (sourceStart && sourceEnd) ? {
+      shift_dates: true,
+      old_start_date: sourceStart,
+      old_end_date: sourceEnd,
+      new_start_date: s.setup.startDate,
+      new_end_date: s.setup.endDate,
+    } : null;
+
+    let migration;
+    try {
+      migration = await CanvasAPI.cloneCourseContent(
+        s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, sourceCourseId, dateShiftOptions
+      );
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+
+    // Adaptive polling: every 3s for the first 2 min, then 10s up to 10 min,
+    // then 30s after that. No hard timeout — Canvas may take a while on
+    // large courses, especially if there are many files.
+    const startedAt = Date.now();
+    const pickInterval = (elapsedSec) => {
+      if (elapsedSec < 120) return 3000;
+      if (elapsedSec < 600) return 10000;
+      return 30000;
+    };
+
+    const finishWithSchedule = async () => {
+      let schedule = { hadSource: false };
+      try {
+        if (sourceState) {
+          // Signal the panel that we've moved past the Canvas migration into
+          // the local-side import + date push phase.
+          onProgress?.({
+            state: 'syncing',
+            completion: 100,
+            elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
+          });
+          schedule = await importScheduleFromSource(
+            sourceCourseId, sourceState,
+            (p) => onProgress?.({
+              ...p,
+              elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
+            }),
+          );
+        }
+      } catch (e) {
+        schedule = { hadSource: false, error: e.message };
+      }
+      const msg = schedule.hadSource
+        ? `Course copied — imported ${schedule.itemCount} planner items (${schedule.relinked} re-linked)`
+        : 'Course content copied — refresh to load assignments';
+      showToast(msg);
+      return { ok: true, schedule };
+    };
+
+    if (!migration?.progress_url) return finishWithSchedule();
+
+    while (true) {
+      if (shouldStop?.()) return { ok: false, stopped: true };
+      const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+      await new Promise((r) => setTimeout(r, pickInterval(elapsedSec)));
+      if (shouldStop?.()) return { ok: false, stopped: true };
+
+      let p;
+      try {
+        p = await CanvasAPI.getProgress(s.canvas.baseUrl, s.canvas.token, migration.progress_url);
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      const updatedElapsed = Math.floor((Date.now() - startedAt) / 1000);
+      onProgress?.({
+        state: p.workflow_state,
+        completion: p.completion ?? 0,
+        elapsedSec: updatedElapsed,
+      });
+      if (p.workflow_state === 'completed') {
+        return finishWithSchedule();
+      }
+      if (p.workflow_state === 'failed') {
+        return { ok: false, error: p.message || 'Copy failed' };
+      }
+    }
+  };
+
   // ══════════════════════════════════════════════════════════════
   // RENDER
   // ══════════════════════════════════════════════════════════════
@@ -1137,7 +1525,7 @@ export default function ClassPlannerApp() {
         <SetupPanel state={state} updateState={updateState} onImport={importSchedule}
           onExportTemplate={exportSemesterTemplate} onImportTemplate={importSemesterTemplate}
           onConnect={connectCanvas} onRefresh={refreshFromCanvas} refreshing={refreshing}
-          onSwitchCourse={switchCourse}
+          onSwitchCourse={switchCourse} onCloneCourse={cloneCourseFrom}
           onClose={() => setShowSetup(false)} />
       )}
 
