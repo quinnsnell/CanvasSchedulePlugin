@@ -25,13 +25,13 @@ import {
 import { CanvasAPI } from './canvas-api.js';
 import { debugLog } from './utils/debug.js';
 import useToast from './hooks/use-toast.js';
+import useUndoableState from './hooks/use-undoable-state.js';
 import {
   PUBLISH_BANNER_DISMISS_MS,
   DATE_PUSH_BATCH_SIZE, DATE_PUSH_SLEEP_MS,
   WIPE_DELETE_BATCH_SIZE, WIPE_DELETE_SLEEP_MS,
   CLONE_POLL_FAST_MS, CLONE_POLL_SLOW_MS, CLONE_POLL_VERY_SLOW_MS,
   CLONE_POLL_FAST_WINDOW_SEC, CLONE_POLL_SLOW_WINDOW_SEC,
-  UNDO_STACK_LIMIT,
 } from './config.js';
 import renderScheduleHtml from './render-schedule-html.js';
 import Header from './components/Header.jsx';
@@ -72,7 +72,11 @@ function applyCourseInfo(state, course) {
 
 export default function ClassPlannerApp() {
   // ── Core state ─────────────────────────────────────────────────
-  const [state, setState] = useState(null);
+  const {
+    state, setState, updateState,
+    undo: undoState, redo: redoState,
+    undoStack, redoStack,
+  } = useUndoableState(null);
   const [loaded, setLoaded] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
@@ -83,8 +87,6 @@ export default function ClassPlannerApp() {
   const [lastPublishedUrl, setLastPublishedUrl] = useState(() => {
     try { return localStorage.getItem('planner-last-published-url') || null; } catch { return null; }
   });
-  const [undoStack, setUndoStack] = useState([]);
-  const [redoStack, setRedoStack] = useState([]);
   const [showShiftModal, setShowShiftModal] = useState(false);
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -362,35 +364,18 @@ export default function ClassPlannerApp() {
   // STATE MUTATION HELPERS
   // ══════════════════════════════════════════════════════════════
 
-  /** Update state with undo snapshot. Pass skipUndo=true for bookkeeping changes. */
-  const updateState = (fn, skipUndo) => {
-    setState((s) => {
-      if (!skipUndo) {
-        setUndoStack((stack) => [...stack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(s)]);
-        setRedoStack([]);
-      }
-      return fn(structuredClone(s));
-    });
-  };
-
+  // Wrap the hook's undo/redo with toast feedback. Check stack depth
+  // before firing so the toast doesn't appear when there's nothing to do.
   const undo = () => {
     if (undoStack.length === 0) return;
-    setState((current) => {
-      setRedoStack((rStack) => [...rStack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(current)]);
-      return undoStack[undoStack.length - 1];
-    });
-    setUndoStack((stack) => stack.slice(0, -1));
+    undoState();
     showToast('Undone');
   };
   undoRef.current = undo;
 
   const redo = () => {
     if (redoStack.length === 0) return;
-    setState((current) => {
-      setUndoStack((uStack) => [...uStack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(current)]);
-      return redoStack[redoStack.length - 1];
-    });
-    setRedoStack((stack) => stack.slice(0, -1));
+    redoState();
     showToast('Redone');
   };
   redoRef.current = redo;
