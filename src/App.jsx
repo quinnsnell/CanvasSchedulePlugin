@@ -416,6 +416,13 @@ export default function ClassPlannerApp() {
     return () => window.removeEventListener('keydown', handler);
   }, [selectedIds.size, clearSelection]);
 
+  // Memoized SelectionContext value — also above the early return so the
+  // hook count stays stable. `state` may be null during the loading render,
+  // hence the optional chain on studentView.
+  const selectionCtx = useMemo(() => ({
+    selectedIds, toggle: toggleSelect, isSelectable: !state?.studentView,
+  }), [selectedIds, toggleSelect, state?.studentView]);
+
   // ── Loading screen ─────────────────────────────────────────────
   if (!loaded || !state) {
     return (
@@ -1061,10 +1068,6 @@ export default function ClassPlannerApp() {
 
   const isStudent = state.studentView;
   const activeDragItem = draggingId ? state.items[draggingId] : null;
-
-  const selectionCtx = useMemo(() => ({
-    selectedIds, toggle: toggleSelect, isSelectable: !isStudent,
-  }), [selectedIds, toggleSelect, isStudent]);
 
   return (
     <DndContext
