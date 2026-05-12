@@ -23,6 +23,7 @@ import {
   localDateStr, generateICal, exportTemplate, importTemplate, rewriteEmbeddedLinks, Store,
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
+import { debugLog } from './utils/debug.js';
 import {
   TOAST_DISMISS_MS, PUBLISH_BANNER_DISMISS_MS,
   DATE_PUSH_BATCH_SIZE, DATE_PUSH_SLEEP_MS,
@@ -1258,8 +1259,7 @@ export default function ClassPlannerApp() {
         ? `found (${Object.keys(local.items).length} items)`
         : 'not found';
       if (local && local.items && local.setup) {
-        // eslint-disable-next-line no-console
-        console.log('[CanvasSchedulePlugin] Source planner state found in localStorage');
+        debugLog('[CanvasSchedulePlugin] Source planner state found in localStorage');
         return local;
       }
     } catch (e) { if (diag) diag.localStorage = `error: ${e.message}`; }
@@ -1269,8 +1269,7 @@ export default function ClassPlannerApp() {
         ? `found (${Object.keys(remote.items).length} items)`
         : 'no schedule-planner.json found';
       if (remote && remote.items && remote.setup) {
-        // eslint-disable-next-line no-console
-        console.log('[CanvasSchedulePlugin] Source planner state found in source\'s Canvas Files');
+        debugLog('[CanvasSchedulePlugin] Source planner state found in source\'s Canvas Files');
         return remote;
       }
     } catch (e) { if (diag) diag.sourceCanvasFiles = `error: ${e.message}`; }
@@ -1404,8 +1403,7 @@ export default function ClassPlannerApp() {
     // Diagnostic so we can see what setups + dates each side is using.
     // If notes land on unexpected dates, this tells us whether the source
     // state's setup or the target setup is the bad input.
-    // eslint-disable-next-line no-console
-    console.log('[CanvasSchedulePlugin] Schedule remap diagnostic', {
+    debugLog('[CanvasSchedulePlugin] Schedule remap diagnostic', {
       sourceSetup: sourceState.setup,
       targetSetup: s.setup,
       template: {
@@ -1705,8 +1703,7 @@ export default function ClassPlannerApp() {
       if (!effectiveSourceState) {
         try {
           const files = await CanvasAPI.listFiles(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
-          // eslint-disable-next-line no-console
-          console.log('[CanvasSchedulePlugin] Post-migration files in target:',
+          debugLog('[CanvasSchedulePlugin] Post-migration files in target:',
             files.map((f) => ({ id: f.id, name: f.display_name || f.filename, size: f.size })));
           const match = files.find((f) => {
             const name = (f.display_name || f.filename || '').toLowerCase();
