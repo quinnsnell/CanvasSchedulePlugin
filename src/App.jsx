@@ -24,8 +24,9 @@ import {
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
 import { debugLog } from './utils/debug.js';
+import useToast from './hooks/use-toast.js';
 import {
-  TOAST_DISMISS_MS, PUBLISH_BANNER_DISMISS_MS,
+  PUBLISH_BANNER_DISMISS_MS,
   DATE_PUSH_BATCH_SIZE, DATE_PUSH_SLEEP_MS,
   WIPE_DELETE_BATCH_SIZE, WIPE_DELETE_SLEEP_MS,
   CLONE_POLL_FAST_MS, CLONE_POLL_SLOW_MS, CLONE_POLL_VERY_SLOW_MS,
@@ -75,7 +76,7 @@ export default function ClassPlannerApp() {
   const [loaded, setLoaded] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
-  const [toast, setToast] = useState(null);
+  const [toast, showToast] = useToast();
   const [draggingId, setDraggingId] = useState(null);
   const [autoEditId, setAutoEditId] = useState(null);
   const [studentEmbed, setStudentEmbed] = useState(null);
@@ -194,11 +195,6 @@ export default function ClassPlannerApp() {
     });
   }, [state, loaded]);
 
-  // ── Toast notifications ────────────────────────────────────────
-  const showToast = (msg, kind = 'ok') => {
-    setToast({ msg, kind });
-    setTimeout(() => setToast(null), TOAST_DISMISS_MS);
-  };
 
   // ── Derived data ───────────────────────────────────────────────
   const allDays = useMemo(() => state ? computeAllDays(state.setup, state.extraDays) : [], [state]);
