@@ -26,6 +26,7 @@ import { CanvasAPI } from './canvas-api.js';
 import { debugLog } from './utils/debug.js';
 import useToast from './hooks/use-toast.js';
 import useUndoableState from './hooks/use-undoable-state.js';
+import { createCanvasSync, assignmentIsQuiz, applyCourseInfo } from './services/canvas-sync.js';
 import {
   PUBLISH_BANNER_DISMISS_MS,
   DATE_PUSH_BATCH_SIZE, DATE_PUSH_SLEEP_MS,
@@ -54,16 +55,6 @@ function freshState() {
     publishHistory: [],
     studentView: false,
   };
-}
-
-/**
- * Extract start/end dates and title from a Canvas course object.
- * Reused by auto-reconnect, connectCanvas, and switchCourse.
- */
-function applyCourseInfo(state, course) {
-  if (course?.startAt && !state.setup.startDate) state.setup.startDate = course.startAt.slice(0, 10);
-  if (course?.endAt && !state.setup.endDate) state.setup.endDate = course.endAt.slice(0, 10);
-  if (course?.name) state.setup.courseTitle = course.name;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -724,24 +715,6 @@ export default function ClassPlannerApp() {
     showToast(`Imported ${events.length} event${events.length !== 1 ? 's' : ''}`);
   };
 
-  // ── Course switching ───────────────────────────────────────────
-
-  const switchCourse = async (newCourseId) => {
-    if (state) Store.save(state);
-    const saved = await Store.load(newCourseId);
-    const canvas = { ...state.canvas, courseId: newCourseId };
-    if (saved) {
-      saved.canvas = canvas;
-      setState(saved);
-    } else {
-      const fresh = freshState();
-      fresh.canvas = canvas;
-      const course = canvas.courses.find((c) => String(c.id) === String(newCourseId));
-      applyCourseInfo(fresh, course);
-      setState(fresh);
-    }
-  };
-
   // ── Item edits ─────────────────────────────────────────────────
 
   const deleteItem = async (id) => {
@@ -938,200 +911,15 @@ export default function ClassPlannerApp() {
   };
 
   // ── Canvas connect / sync / refresh ────────────────────────────
+  // The four handlers below come from services/canvas-sync.js. They're
+  // memoized so the function identities stay stable across renders.
 
-  const connectCanvas = async (baseUrl, token) => {
-    try {
-      const courses = await CanvasAPI.listCourses(baseUrl, token);
-      updateState((s) => {
-        s.canvas.baseUrl = baseUrl;
-        s.canvas.token = token;
-        s.canvas.connected = true;
-        s.canvas.courses = courses.map((c) => ({
-          id: c.id, name: c.name,
-          startAt: c.start_at || c.term?.start_at || null,
-          endAt: c.end_at || c.term?.end_at || null,
-        }));
-        if (s.canvas.courseId) {
-          const course = s.canvas.courses.find((c) => String(c.id) === String(s.canvas.courseId));
-          applyCourseInfo(s, course);
-        }
-        return s;
-      });
-      showToast(`Connected — ${courses.length} courses found`);
-      return { ok: true, count: courses.length };
-    } catch (e) {
-      showToast(`Could not connect: ${e.message}`, 'err');
-      return { ok: false, error: e.message };
-    }
-  };
-
-  /**
-   * Detect whether a Canvas assignment record is actually a quiz. Canvas
-   * stores both New Quizzes (Quiz LTI) and Classic Quizzes as assignments:
-   *   - New Quiz: `is_quiz_lti_assignment: true`
-   *   - Classic Quiz: `quiz_id: <number>` set
-   */
-  const assignmentIsQuiz = (a) =>
-    Boolean(a?.is_quiz_lti_assignment || a?.quiz_id);
-
-  /** Light sync — merge new Canvas assignments (triggered by window focus). */
-  const syncFromCanvas = async () => {
-    const s0 = stateRef.current;
-    if (!s0?.canvas?.connected || !s0.canvas.courseId) return;
-    let list;
-    try {
-      list = await CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
-    } catch { return; }
-
-    const pending = [...(s0.pendingCreations || [])].sort((a, b) => a.time - b.time);
-    const claimedPending = new Set();
-    const patchPromises = [];
-
-    updateState((s) => {
-      let added = 0;
-      const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
-      list.forEach((a) => {
-        const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
-        if (existing) {
-          existing.title = a.name;
-          existing.points = a.points_possible || 0;
-          existing.htmlUrl = a.html_url;
-          existing.isQuiz = assignmentIsQuiz(a);
-          if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
-          return;
-        }
-        const id = uid();
-        let due = a.due_at ? localDateStr(a.due_at) : null;
-        if (!due) {
-          const pendingMatch = pending.find((p) => !claimedPending.has(p.id));
-          if (pendingMatch) {
-            claimedPending.add(pendingMatch.id);
-            due = pendingMatch.date;
-            patchPromises.push(
-              CanvasAPI.setDueDate(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, a.id,
-                new Date(due + 'T23:59:00').toISOString()).catch(() => null)
-            );
-          }
-        } else {
-          const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
-          if (match) claimedPending.add(match.id);
-        }
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
-        if (due) {
-          if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
-          s.schedule[due] = s.schedule[due] || [];
-          s.schedule[due].push(id);
-        } else {
-          s.unscheduled.push(id);
-        }
-        added++;
-      });
-      s.pendingCreations = (s.pendingCreations || []).filter((p) => !claimedPending.has(p.id));
-      if (added) showToast(`Added ${added} new assignment${added > 1 ? 's' : ''}`);
-      return s;
-    });
-    await Promise.all(patchPromises);
-  };
+  const canvasSync = useMemo(
+    () => createCanvasSync({ stateRef, updateState, setState, showToast, setRefreshing, freshState }),
+    [updateState, setState, showToast]
+  );
+  const { connectCanvas, switchCourse, syncFromCanvas, refreshFromCanvas } = canvasSync;
   syncRef.current = syncFromCanvas;
-
-  /** Full reload — download published schedule, then merge current Canvas assignments. */
-  const refreshFromCanvas = async () => {
-    const s0 = stateRef.current;
-    if (!s0?.canvas?.connected || !s0.canvas.courseId) {
-      showToast('Pick a course first', 'err');
-      return;
-    }
-    setRefreshing(true);
-
-    let published = null;
-    try {
-      published = await CanvasAPI.downloadSchedule(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId);
-    } catch { /* no published schedule yet */ }
-
-    let list = [];
-    let groups = [];
-    try {
-      [list, groups] = await Promise.all([
-        CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId),
-        CanvasAPI.listAssignmentGroups(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => []),
-      ]);
-    } catch (e) {
-      if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); setRefreshing(false); return; }
-    }
-
-    const groupsMap = {};
-    (Array.isArray(groups) ? groups : []).forEach((g, i) => {
-      groupsMap[g.id] = { id: g.id, name: g.name, color: GROUP_COLORS[i % GROUP_COLORS.length] };
-    });
-
-    updateState((s) => {
-      s.canvas.assignmentGroups = groupsMap;
-      if (published) {
-        s.setup = published.setup || s.setup;
-        s.items = published.items || {};
-        s.schedule = published.schedule || {};
-        s.extraDays = published.extraDays || [];
-        s.unscheduled = published.unscheduled || [];
-        s.holidays = published.holidays || {};
-        s.modules = published.modules || {};
-        s.publishHistory = published.publishHistory || [];
-      } else {
-        s.items = {};
-        s.schedule = {};
-        s.extraDays = [];
-        s.unscheduled = [];
-      }
-      s.pendingCreations = [];
-
-      const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
-      let added = 0, updated = 0, autoAdded = 0;
-
-      list.forEach((a) => {
-        const existing = Object.values(s.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
-        if (existing) {
-          existing.title = a.name;
-          existing.points = a.points_possible || 0;
-          existing.htmlUrl = a.html_url;
-          existing.isQuiz = assignmentIsQuiz(a);
-          if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
-          const newDue = a.due_at ? localDateStr(a.due_at) : null;
-          if (newDue && newDue !== existing.dueDate) {
-            if (existing.dueDate && s.schedule[existing.dueDate]) {
-              s.schedule[existing.dueDate] = s.schedule[existing.dueDate].filter((x) => x !== existing.id);
-              if (s.schedule[existing.dueDate].length === 0) delete s.schedule[existing.dueDate];
-            }
-            existing.dueDate = newDue;
-            if (!teachingNow.has(newDue) && !s.extraDays.includes(newDue)) { s.extraDays.push(newDue); autoAdded++; }
-            s.schedule[newDue] = s.schedule[newDue] || [];
-            if (!s.schedule[newDue].includes(existing.id)) s.schedule[newDue].push(existing.id);
-          }
-          updated++;
-          return;
-        }
-        const id = uid();
-        const due = a.due_at ? localDateStr(a.due_at) : null;
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
-        if (due) {
-          if (!teachingNow.has(due) && !s.extraDays.includes(due)) { s.extraDays.push(due); autoAdded++; }
-          s.schedule[due] = s.schedule[due] || [];
-          s.schedule[due].push(id);
-        } else {
-          s.unscheduled.push(id);
-        }
-        added++;
-      });
-
-      const parts = [];
-      if (published) parts.push('loaded schedule');
-      if (added) parts.push(`${added} new`);
-      if (updated) parts.push(`${updated} updated`);
-      if (autoAdded) parts.push(`+${autoAdded} dates`);
-      s.loadedAt = new Date().toISOString();
-      showToast(parts.length ? `Refreshed: ${parts.join(', ')}` : 'No changes');
-      return s;
-    });
-    setRefreshing(false);
-  };
 
   /**
    * Fallback for courses where the user's token lacks Canvas Course Reset
