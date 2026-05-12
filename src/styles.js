@@ -100,7 +100,9 @@ export function appStyles() {
       .planner-header-row nav,
       .planner-header-row button,
       footer, aside,
-      .skip-link { display: none !important; }
+      .skip-link,
+      .no-print,
+      .month-calendar { display: none !important; }
       .day-tools { display: none !important; }
       [title="Drag to move"], .kb-move-btn { display: none !important; }
       .planner-card .flex.flex-col { display: none !important; }

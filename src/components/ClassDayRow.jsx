@@ -38,7 +38,7 @@ export default function ClassDayRow({
   const dayLabel = DAY_FULL[DAY_CODES[d.getDay()]];
 
   return (
-    <div className={`day-row${holidayLabel ? ' holiday-row' : ''}`} style={{
+    <div id={`day-${date}`} className={`day-row${holidayLabel ? ' holiday-row' : ''}`} style={{
       borderBottom: `1px solid ${T.border}`,
       boxShadow: isWeekStart ? 'none' : (weekShade ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)'),
       borderTop: isWeekStart ? `2px solid ${T.borderStrong}` : 'none',

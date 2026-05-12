@@ -28,6 +28,7 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import {
   DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, closestCenter,
@@ -49,6 +50,7 @@ import { PUBLISH_BANNER_DISMISS_MS } from './config.js';
 import renderScheduleHtml from './render-schedule-html.js';
 import Header from './components/Header.jsx';
 import ScheduleTable from './components/ScheduleTable.jsx';
+import MonthCalendar from './components/MonthCalendar.jsx';
 import { PublishBanner, ActivityLog } from './components/PublishBanner.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
@@ -96,6 +98,23 @@ export default function ClassPlannerApp() {
   const [conflictData, setConflictData] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // 'linear' = scrollable day-row table; 'month' = read-only month grids.
+  // Persisted in localStorage so it survives reload.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem('planner-view-mode') || 'linear'; } catch { return 'linear'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('planner-view-mode', viewMode); } catch {}
+  }, [viewMode]);
+
+  // Force linear view before print — month grids look fine on screen but
+  // the linear day-row table is what the print stylesheet is tuned for.
+  // flushSync ensures the re-render commits before the print dialog opens.
+  useEffect(() => {
+    const handler = () => flushSync(() => setViewMode('linear'));
+    window.addEventListener('beforeprint', handler);
+    return () => window.removeEventListener('beforeprint', handler);
+  }, []);
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const v = localStorage.getItem('planner-dark-mode');
@@ -1041,22 +1060,55 @@ export default function ClassPlannerApp() {
           {allDays.length === 0 ? (
             <EmptyState onSetup={() => setShowSetup(true)} isConnected={state.canvas.connected} />
           ) : (
-            <ScheduleTable
-              allDays={filteredDays} state={state} isStudent={isStudent}
-              teachingSet={teachingSet} pendingByDate={pendingByDate}
-              draggingId={draggingId}
-              autoEditId={autoEditId} clearAutoEdit={() => setAutoEditId(null)}
-              onMoveItem={moveItem} onUpdateItem={updateItem} onDeleteItem={deleteItem}
-              onDuplicate={duplicateItem} onReorder={reorderOnDay}
-              onAddNote={addNoteOnDay} onAddAssignment={startAssignmentCreation}
-              onAddQuiz={startQuizCreation}
-              onAddExtraDay={addExtraDay} onRemoveExtraDay={removeExtraDay}
-              onToggleHoliday={toggleHoliday} onAddModule={addModuleHeader}
-              onRemoveModule={removeModuleHeader}
-              onShowRecurringModal={() => setShowRecurringModal(true)}
-              allDaysSet={allDaysSet}
-              assignmentGroups={state.canvas.assignmentGroups || {}}
-            />
+            <>
+              <div className="view-toggle no-print" style={{ display: 'flex', gap: 4, marginBottom: 12, fontFamily: FONT_MONO, fontSize: 11 }}>
+                {['linear', 'month'].map((mode) => (
+                  <button key={mode}
+                    onClick={() => setViewMode(mode)}
+                    aria-pressed={viewMode === mode}
+                    style={{
+                      padding: '4px 10px', borderRadius: 3,
+                      border: `1px solid ${viewMode === mode ? T.inkBlue : T.border}`,
+                      background: viewMode === mode ? T.inkBlueSoft : T.paper,
+                      color: viewMode === mode ? T.inkBlue : T.muted,
+                      cursor: 'pointer', textTransform: 'capitalize',
+                    }}>
+                    {mode === 'linear' ? 'List' : 'Month'}
+                  </button>
+                ))}
+              </div>
+              {viewMode === 'month' ? (
+                <MonthCalendar
+                  state={state}
+                  allDays={allDays}
+                  onDayClick={(date) => {
+                    setViewMode('linear');
+                    // Defer scroll until linear view has rendered. ID is set
+                    // on each ClassDayRow's outer div.
+                    setTimeout(() => {
+                      document.getElementById(`day-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 50);
+                  }}
+                />
+              ) : (
+                <ScheduleTable
+                  allDays={filteredDays} state={state} isStudent={isStudent}
+                  teachingSet={teachingSet} pendingByDate={pendingByDate}
+                  draggingId={draggingId}
+                  autoEditId={autoEditId} clearAutoEdit={() => setAutoEditId(null)}
+                  onMoveItem={moveItem} onUpdateItem={updateItem} onDeleteItem={deleteItem}
+                  onDuplicate={duplicateItem} onReorder={reorderOnDay}
+                  onAddNote={addNoteOnDay} onAddAssignment={startAssignmentCreation}
+                  onAddQuiz={startQuizCreation}
+                  onAddExtraDay={addExtraDay} onRemoveExtraDay={removeExtraDay}
+                  onToggleHoliday={toggleHoliday} onAddModule={addModuleHeader}
+                  onRemoveModule={removeModuleHeader}
+                  onShowRecurringModal={() => setShowRecurringModal(true)}
+                  allDaysSet={allDaysSet}
+                  assignmentGroups={state.canvas.assignmentGroups || {}}
+                />
+              )}
+            </>
           )}
         </section>
 
