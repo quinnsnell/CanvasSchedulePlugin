@@ -41,39 +41,76 @@ The app exists because Canvas's native syllabus and calendar pages don't offer a
     ├── index.css               # Tailwind v4 import + box-sizing reset
     ├── theme.js                # Light/dark palettes, fonts, setTheme(), GROUP_COLORS
     ├── styles.js               # App-level CSS (responsive, print, a11y)
-    ├── utils.js                # Day codes, date math, iCal/CSV parse, templates, Store
+    ├── config.js               # Tunable constants (timers, batch sizes, etc.)
+    ├── utils.js                # Barrel re-export of src/utils/*
     ├── canvas-api.js           # CORS proxy config, Canvas REST API client (paginated)
     ├── render-schedule-html.js # Static HTML table for Canvas Page publish
-    ├── App.jsx                 # Main component: state, handlers, layout
+    ├── App.jsx                 # Top component: composes hooks + services + render
     ├── __tests__/
-    │   └── utils.test.js       # 68 unit tests for utils.js
+    │   └── utils.test.js       # 81 unit tests for the utils/* modules
+    ├── utils/
+    │   ├── dates.js            # DAY_CODES, addDays, generateClassDays, formatters
+    │   ├── uid.js              # uid() + PENDING_TTL_MS
+    │   ├── ical.js             # generateICal + parseICal
+    │   ├── csv.js              # parseCSV with quoted-field handling
+    │   ├── link-rewrite.js     # rewriteEmbeddedLinks for course-copy
+    │   ├── template.js         # exportTemplate + importTemplate
+    │   ├── store.js            # Store: per-course localStorage persistence
+    │   └── debug.js            # debugLog gated on import.meta.env.DEV
+    ├── hooks/
+    │   ├── use-toast.js        # Auto-dismiss toast banner state
+    │   └── use-undoable-state.js  # state + undo/redo + updateState helper
+    ├── services/
+    │   ├── canvas-sync.js      # connectCanvas, switchCourse, sync/refresh from Canvas
+    │   └── course-clone.js     # cloneCourseFrom + manual wipe + planner-state import
     └── components/
         ├── ui.jsx              # Shared primitives: Field, IconButton, ActionButton, etc.
         ├── Header.jsx          # App toolbar: title, search, action buttons
         ├── ScheduleTable.jsx   # Schedule grid: column headers + day rows
-        ├── ClassDayRow.jsx     # One schedule row + AddDayPopover
-        ├── ItemCard.jsx        # Assignment/note card + RichEditor
+        ├── ClassDayRow.jsx     # One schedule row + popovers (portal-rendered)
+        ├── ItemCard.jsx        # Assignment/note card + DragOverlayCard
+        ├── RichEditor.jsx      # contentEditable + toolbar + Canvas link picker
         ├── UnscheduledZone.jsx # Sidebar drop target
         ├── PublishBanner.jsx   # Publish success banner + ActivityLog
-        └── Panels.jsx          # SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState
+        └── panels/             # One file per panel/modal + barrel index.js
+            ├── SetupPanel.jsx
+            ├── ShiftModal.jsx
+            ├── ConflictModal.jsx
+            ├── RecurringModal.jsx
+            ├── EmptyState.jsx
+            └── CloneWarnings.jsx
 ```
 
 | Module | Purpose |
 |---|---|
 | `theme.js` | LIGHT/DARK palettes, `T` (mutable current palette), `setTheme()`, font constants, GROUP_COLORS |
 | `styles.js` | App-level CSS string (responsive breakpoints, print styles, accessibility, animations) |
-| `utils.js` | Day-of-week codes, date math, iCal generation/parsing, CSV parsing, semester templates, `Store` persistence |
+| `config.js` | Centralized tuning constants: toast/banner timers, throttle batch sizes + sleeps, clone polling intervals, day-picker cap, undo stack limit |
+| `utils.js` | Barrel re-export of focused sub-modules under `src/utils/` |
+| `utils/dates.js` | Day-of-week codes, addDays, generateClassDays, computeAllDays, getAddableDatesAfter, weekKey/weekNumber, formatters |
+| `utils/uid.js` | `uid()` short random IDs + `PENDING_TTL_MS` (re-exported from config) |
+| `utils/ical.js` | `generateICal()` and `parseICal()` (RFC 5545–aware) |
+| `utils/csv.js` | `parseCSV()` with quoted-field/multi-format-date handling |
+| `utils/link-rewrite.js` | `rewriteEmbeddedLinks()` for swapping course IDs in note HTML |
+| `utils/template.js` | `exportTemplate()` + `importTemplate()` (teaching-day-index remap) |
+| `utils/store.js` | `Store`: per-course localStorage persistence with `window.storage` fallback |
+| `utils/debug.js` | `debugLog`/`debugWarn` — tree-shaken in production builds |
+| `hooks/use-toast.js` | Toast state + auto-dismiss timer |
+| `hooks/use-undoable-state.js` | state + undo/redo stacks + `updateState(fn, skipUndo?)` |
+| `services/canvas-sync.js` | Factory returning `connectCanvas`, `switchCourse`, `syncFromCanvas`, `refreshFromCanvas`; exports `assignmentIsQuiz` + `applyCourseInfo` |
+| `services/course-clone.js` | Factory returning `cloneCourseFrom`; exports `manuallyWipeCourse`, `loadSourcePlannerState`, `buildLinkRemap` |
 | `canvas-api.js` | CORS proxy URL management, `canvasFetch()`/`canvasFetchAll()` (paginated), `CanvasAPI` methods |
 | `render-schedule-html.js` | Pure function: generates static HTML table for Canvas Page publish (dark mode responsive) |
-| `App.jsx` | `ClassPlannerApp` — owns all state, undo stack, Canvas sync, renders layout |
+| `App.jsx` | `ClassPlannerApp` — composes hooks + service factories, owns top-level state, renders layout |
 | `components/ui.jsx` | `Field`, `IconButton`, `ToggleButton`, `ActionButton`, `ToolbarBtn`, `DayToolBtn`, style helpers |
 | `components/Header.jsx` | App header with course title, metadata, collapsible search, and toolbar buttons |
 | `components/ScheduleTable.jsx` | Schedule grid table with column headers, module headers, and day rows |
-| `components/ClassDayRow.jsx` | One row of the schedule grid (date column + content column + day tools) |
-| `components/ItemCard.jsx` | Renders an assignment or rich-text card; includes `RichEditor` and `DragOverlayCard` |
+| `components/ClassDayRow.jsx` | One row of the schedule grid; popovers render via portal to escape the grid's overflow |
+| `components/ItemCard.jsx` | Renders an assignment or rich-text card; title is a Canvas link |
+| `components/RichEditor.jsx` | contentEditable + toolbar + Canvas file/page picker |
 | `components/UnscheduledZone.jsx` | Sidebar drop target for items without a date |
 | `components/PublishBanner.jsx` | Publish success banner with copy-link, and `ActivityLog` publish history |
-| `components/Panels.jsx` | `SetupPanel` (semester + Canvas connection + import/templates), `ShiftModal`, `ConflictModal`, `RecurringModal`, `EmptyState` |
+| `components/panels/` | One file per panel/modal — SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState, CloneWarnings; barrel re-export in `index.js` |
 
 ## Data model
 

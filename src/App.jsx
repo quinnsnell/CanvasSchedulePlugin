@@ -1,12 +1,29 @@
 /**
- * ClassPlannerApp — main component and state orchestrator.
+ * ClassPlannerApp — top-level component and state orchestrator.
  *
- * Owns all application state (schedule, items, canvas connection, undo stack).
- * Delegates rendering to focused component modules:
- *   Header, ScheduleTable, ClassDayRow, ItemCard, UnscheduledZone,
- *   Panels (Setup, Shift, Conflict, Recurring, Empty),
- *   PublishBanner, ActivityLog.
+ * Owns application state via useUndoableState (items, schedule, canvas
+ * connection, etc.). Delegates business logic to services and rendering
+ * to focused component modules:
  *
+ *   State + UX hooks
+ *     hooks/use-undoable-state — state + undo/redo stacks + updateState
+ *     hooks/use-toast          — auto-dismiss toast banner
+ *
+ *   Services (factory-bound to deps via useMemo)
+ *     services/canvas-sync   — connectCanvas, switchCourse,
+ *                              syncFromCanvas, refreshFromCanvas
+ *     services/course-clone  — cloneCourseFrom + helpers
+ *
+ *   Rendering
+ *     components/Header, ScheduleTable, ClassDayRow, ItemCard,
+ *     UnscheduledZone, PublishBanner, RichEditor
+ *     components/panels/{SetupPanel, ShiftModal, ConflictModal,
+ *                        RecurringModal, EmptyState, CloneWarnings}
+ *
+ *   Pure utilities (split by concern under src/utils/)
+ *     dates, ical, csv, template, link-rewrite, store, uid, debug
+ *
+ * Tunable constants live in src/config.js.
  * State shape: see CLAUDE.md § Data model.
  */
 
