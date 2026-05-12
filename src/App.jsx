@@ -1008,6 +1008,7 @@ export default function ClassPlannerApp() {
       {/* Main schedule grid */}
       <main id="schedule-content" role="main" aria-label="Course schedule"
             className={`planner-shell planner-main ${!isStudent ? 'with-sidebar' : ''}`}
+            data-printed-on={new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
             style={{ maxWidth: 1152, margin: '0 auto' }}>
         <section style={{ minWidth: 0 }}>
           {allDays.length === 0 ? (

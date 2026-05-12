@@ -107,6 +107,24 @@ export function appStyles() {
       [role="status"][aria-live="polite"] { display: none !important; }
       [role="dialog"] { display: none !important; }
       .module-header button { display: none !important; }
+      /* Portal-rendered popovers (NoteMenuPopover, AddDayPopover, etc.)
+         attach directly to <body> with position:fixed and a high z-index.
+         They shouldn't appear in print even if open at print time. */
+      body > div:not([id]):not([class]) { display: none !important; }
+      /* Hide the "Setup" panel if it happens to be open at print time. */
+      .planner-header + div { display: none !important; }
+      /* "Printed on" stamp at the very end. */
+      .planner-main::after {
+        content: "Printed " attr(data-printed-on);
+        display: block;
+        margin-top: 18px;
+        padding-top: 8px;
+        border-top: 1px dashed #999;
+        font-family: ${FONT_MONO};
+        font-size: 9pt;
+        color: #555 !important;
+        text-align: right;
+      }
       header[role="banner"] {
         border-bottom: 2px solid #000 !important;
         padding: 0 0 8px 0 !important;
