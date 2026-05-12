@@ -134,6 +134,70 @@ async function canvasFetchAll(baseUrl, token, path) {
 // ── Canvas API methods ─────────────────────────────────────────
 
 const SCHEDULE_FILENAME = 'schedule-planner.json';
+const ICAL_FILENAME = 'schedule.ics';
+
+/**
+ * Upload a single file to a course's Files area via Canvas's 3-step
+ * upload flow. Deletes any existing file with the same display_name
+ * first so the URL stays stable across re-publishes (subscribers don't
+ * see a 404).
+ */
+/**
+ * Get a Canvas-issued public URL for a course file by display_name.
+ * Returns null if the file doesn't exist. The URL is presigned and
+ * stable across re-publishes (Canvas reuses the same file id).
+ */
+async function getPublicFileUrl(baseUrl, token, courseId, filename) {
+  const files = await canvasFetch(baseUrl, token,
+    `/courses/${courseId}/files?search_term=${filename}&per_page=10`);
+  const file = files.find((f) => f.display_name === filename || f.filename === filename);
+  if (!file) return null;
+  const meta = await canvasFetch(baseUrl, token, `/files/${file.id}/public_url`);
+  return meta.public_url;
+}
+
+async function uploadCourseFile(baseUrl, token, courseId, filename, contentType, blob) {
+  // Delete existing file first to avoid accumulating versions
+  try {
+    const files = await canvasFetch(baseUrl, token,
+      `/courses/${courseId}/files?search_term=${filename}&per_page=10`);
+    const existing = files.find((f) => f.display_name === filename || f.filename === filename);
+    if (existing) {
+      await canvasFetch(baseUrl, token, `/files/${existing.id}`, { method: 'DELETE' });
+    }
+  } catch { /* ok if delete fails */ }
+
+  // Step 1: Request an upload URL from Canvas
+  const step1 = await canvasFetch(baseUrl, token, `/courses/${courseId}/files`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: filename,
+      content_type: contentType,
+      size: blob.size,
+      on_duplicate: 'overwrite',
+      parent_folder_path: '/',
+    }),
+  });
+
+  // Step 2: POST the file to the upload URL (may be S3 or same-domain)
+  const form = new FormData();
+  Object.entries(step1.upload_params).forEach(([k, v]) => form.append(k, v));
+  form.append('file', blob, filename);
+  const uploadUrl = proxyUrl(step1.upload_url, baseUrl);
+  const step2 = await fetch(uploadUrl, { method: 'POST', body: form, redirect: 'follow' });
+
+  if (step2.status >= 400) {
+    throw new Error(`File upload failed: ${step2.status}`);
+  }
+  // Step 3: If Canvas returned a redirect, follow it to confirm the upload
+  if (step2.status >= 300) {
+    const confirmUrl = step2.headers.get('Location');
+    if (confirmUrl) {
+      await fetch(proxyUrl(confirmUrl, baseUrl), { headers: { Authorization: `Bearer ${token}` } });
+    }
+  }
+  return true;
+}
 
 export const CanvasAPI = {
   /** List courses where the user is a teacher (paginated). */
@@ -220,53 +284,22 @@ export const CanvasAPI = {
     canvasFetch(b, t, `/courses/${c}/reset_content`, { method: 'POST' }),
 
   /**
-   * Upload schedule JSON to Canvas course files.
-   * Uses Canvas's 3-step file upload flow: request URL, POST file, confirm.
+   * Upload schedule JSON to Canvas course files. Used by the Publish flow
+   * for cross-device persistence and for the student-view embed.
    */
-  async uploadSchedule(baseUrl, token, courseId, data) {
-    const jsonStr = JSON.stringify(data);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
+  uploadSchedule(baseUrl, token, courseId, data) {
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    return uploadCourseFile(baseUrl, token, courseId, SCHEDULE_FILENAME, 'application/json', blob);
+  },
 
-    // Delete existing file first to avoid accumulating versions
-    try {
-      const files = await canvasFetch(baseUrl, token,
-        `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
-      const existing = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
-      if (existing) {
-        await canvasFetch(baseUrl, token, `/files/${existing.id}`, { method: 'DELETE' });
-      }
-    } catch { /* ok if delete fails */ }
-
-    // Step 1: Request an upload URL from Canvas
-    const step1 = await canvasFetch(baseUrl, token, `/courses/${courseId}/files`, {
-      method: 'POST',
-      body: JSON.stringify({
-        name: SCHEDULE_FILENAME,
-        content_type: 'application/json',
-        size: blob.size,
-        on_duplicate: 'overwrite',
-        parent_folder_path: '/',
-      }),
-    });
-
-    // Step 2: POST the file to the upload URL (may be S3 or same-domain)
-    const form = new FormData();
-    Object.entries(step1.upload_params).forEach(([k, v]) => form.append(k, v));
-    form.append('file', blob, SCHEDULE_FILENAME);
-    const uploadUrl = proxyUrl(step1.upload_url, baseUrl);
-    const step2 = await fetch(uploadUrl, { method: 'POST', body: form, redirect: 'follow' });
-
-    if (step2.status >= 400) {
-      throw new Error(`File upload failed: ${step2.status}`);
-    }
-    // Step 3: If Canvas returned a redirect, follow it to confirm the upload
-    if (step2.status >= 300) {
-      const confirmUrl = step2.headers.get('Location');
-      if (confirmUrl) {
-        await fetch(proxyUrl(confirmUrl, baseUrl), { headers: { Authorization: `Bearer ${token}` } });
-      }
-    }
-    return true;
+  /**
+   * Upload an iCal (.ics) export to Canvas course files. Students can
+   * subscribe to the resulting public URL from Google/Apple Calendar
+   * and get auto-updates whenever the instructor re-publishes.
+   */
+  uploadIcal(baseUrl, token, courseId, icsText) {
+    const blob = new Blob([icsText], { type: 'text/calendar' });
+    return uploadCourseFile(baseUrl, token, courseId, ICAL_FILENAME, 'text/calendar', blob);
   },
 
   /** Download the published schedule JSON from Canvas course files. */
@@ -308,14 +341,18 @@ export const CanvasAPI = {
     }
   },
 
-  /** Get a public URL for the schedule file (for student iframes). */
+  /** Get a public URL for the schedule JSON file (for student iframes). */
   async getPublicUrl(baseUrl, token, courseId) {
-    const files = await canvasFetch(baseUrl, token,
-      `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
-    const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
-    if (!file) return null;
-    const meta = await canvasFetch(baseUrl, token, `/files/${file.id}/public_url`);
-    return meta.public_url;
+    return getPublicFileUrl(baseUrl, token, courseId, SCHEDULE_FILENAME);
+  },
+
+  /**
+   * Get a public URL for the iCal subscription file. Subscribers paste
+   * this into Google Calendar / Apple Calendar / Outlook to follow
+   * schedule updates automatically.
+   */
+  async getPublicIcalUrl(baseUrl, token, courseId) {
+    return getPublicFileUrl(baseUrl, token, courseId, ICAL_FILENAME);
   },
 
   /**

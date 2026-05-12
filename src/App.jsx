@@ -860,11 +860,25 @@ export default function ClassPlannerApp() {
         publishedAt: now,
       };
       await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
+      // Also upload an .ics export so students can grab a downloadable
+      // calendar file from Canvas Files. The presigned public URL we
+      // surface is short-lived (Canvas issues ~1-hour S3 URLs) but the
+      // file itself sticks around — the Canvas Files UI link is permanent.
+      let icalUrl = null;
+      try {
+        await CanvasAPI.uploadIcal(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, generateICal(s));
+        icalUrl = await CanvasAPI.getPublicIcalUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+      } catch (e) {
+        // Don't fail the whole publish if iCal upload fails — the JSON
+        // is the primary artifact, the iCal is a nice-to-have.
+        // eslint-disable-next-line no-console
+        console.warn('iCal upload failed:', e.message);
+      }
       updateState((st) => { st.publishHistory = [...(st.publishHistory || []), historyEntry]; st.loadedAt = now; return st; }, true);
       const html = renderScheduleHtml(s, s.setup.courseTitle);
       const slug = await CanvasAPI.publishPage(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, 'Schedule', html);
       const pageUrl = `${s.canvas.baseUrl.replace(/\/+$/, '')}/courses/${s.canvas.courseId}/pages/${slug}`;
-      setStudentEmbed(pageUrl);
+      setStudentEmbed({ pageUrl, icalUrl });
       setLastPublishedUrl(pageUrl);
       try { localStorage.setItem('planner-last-published-url', pageUrl); } catch {}
       setTimeout(() => setStudentEmbed(null), PUBLISH_BANNER_DISMISS_MS);
@@ -990,7 +1004,10 @@ export default function ClassPlannerApp() {
       )}
 
       {studentEmbed && !isStudent && (
-        <PublishBanner url={studentEmbed} onDismiss={() => setStudentEmbed(null)} />
+        <PublishBanner
+          url={studentEmbed.pageUrl}
+          icalUrl={studentEmbed.icalUrl}
+          onDismiss={() => setStudentEmbed(null)} />
       )}
 
       {!isStudent && showActivityLog && (

@@ -4,20 +4,38 @@
  */
 
 import React, { useState } from 'react';
-import { X, Check, Link2 } from 'lucide-react';
+import { X, Check, Link2, Calendar } from 'lucide-react';
 import { T, FONT_MONO } from '../theme.js';
 import { IconButton } from './ui.jsx';
 
-export function PublishBanner({ url, onDismiss }) {
+/**
+ * Reusable copy-to-clipboard pill button. `done` resets ~2s after click.
+ */
+function CopyButton({ value, label = 'Copy link' }) {
   const [copied, setCopied] = useState(false);
-  const copyUrl = async () => {
+  const onClick = async () => {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
   };
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '4px 10px', borderRadius: 3,
+      fontFamily: FONT_MONO, fontSize: '11px',
+      border: `1px solid ${copied ? T.successBorder : T.border}`,
+      background: copied ? T.successBg : T.paper,
+      color: copied ? T.forest : T.ink,
+      cursor: 'pointer', whiteSpace: 'nowrap',
+    }}>
+      {copied ? <><Check size={12} /> Copied</> : <><Link2 size={12} /> {label}</>}
+    </button>
+  );
+}
 
+export function PublishBanner({ url, icalUrl, onDismiss }) {
   return (
     <div style={{ background: T.successBg, borderBottom: `1px solid ${T.successBorder}`, padding: '12px 24px' }}>
       <div style={{ maxWidth: 1152, margin: '0 auto' }}>
@@ -35,18 +53,26 @@ export function PublishBanner({ url, onDismiss }) {
             style={{ fontFamily: FONT_MONO, fontSize: '12px', color: T.inkBlue, wordBreak: 'break-all' }}>
             {url}
           </a>
-          <button onClick={copyUrl} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            padding: '4px 10px', borderRadius: 3,
-            fontFamily: FONT_MONO, fontSize: '11px',
-            border: `1px solid ${copied ? T.successBorder : T.border}`,
-            background: copied ? T.successBg : T.paper,
-            color: copied ? T.forest : T.ink,
-            cursor: 'pointer', whiteSpace: 'nowrap',
-          }}>
-            {copied ? <><Check size={12} /> Copied</> : <><Link2 size={12} /> Copy link</>}
-          </button>
+          <CopyButton value={url} />
         </div>
+
+        {icalUrl && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${T.successBorder}` }}>
+            <p style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, marginBottom: 6 }}>
+              <Calendar size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />
+              <strong>iCal feed</strong> uploaded to Canvas Files as <code>schedule.ics</code>.
+              Students can download it for one-shot import into Google/Apple Calendar.
+              The link below is a Canvas-issued public URL valid for ~1 hour — re-fetch from Canvas Files for a fresh one if it expires.
+            </p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <a href={icalUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontFamily: FONT_MONO, fontSize: '11px', color: T.inkBlue, wordBreak: 'break-all' }}>
+                {icalUrl.length > 80 ? icalUrl.slice(0, 80) + '…' : icalUrl}
+              </a>
+              <CopyButton value={icalUrl} label="Copy .ics link" />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
