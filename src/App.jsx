@@ -51,6 +51,8 @@ import renderScheduleHtml from './render-schedule-html.js';
 import Header from './components/Header.jsx';
 import ScheduleTable from './components/ScheduleTable.jsx';
 import MonthCalendar from './components/MonthCalendar.jsx';
+import { SelectionProvider } from './components/SelectionContext.jsx';
+import BulkActionBar from './components/BulkActionBar.jsx';
 import { PublishBanner, ActivityLog } from './components/PublishBanner.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
@@ -98,6 +100,9 @@ export default function ClassPlannerApp() {
   const [conflictData, setConflictData] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Bulk-selection set of item IDs; cleared on Escape, on most state-mutating
+  // actions, or when the bulk-action bar's Clear button is hit.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   // 'linear' = scrollable day-row table; 'month' = read-only month grids.
   // Persisted in localStorage so it survives reload.
   const [viewMode, setViewMode] = useState(() => {
@@ -765,6 +770,70 @@ export default function ClassPlannerApp() {
     showToast(`Imported ${events.length} event${events.length !== 1 ? 's' : ''}`);
   };
 
+  // ── Bulk selection ────────────────────────────────────────────
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  // Esc key clears selection — matches the convention of most file managers.
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape' && selectedIds.size > 0) clearSelection();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedIds.size, clearSelection]);
+
+  /**
+   * Bulk move: re-target every selected item to `toDate`. Skips items that
+   * are already on the target date. Canvas push still happens per-item via
+   * moveItem, so this can take a moment over a slow Canvas link.
+   */
+  const bulkMoveTo = async (toDate) => {
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      const it = state.items[id];
+      if (!it) continue;
+      // For unscheduled items (no dueDate) we always move; for scheduled
+      // items we skip when already on the target date.
+      if (it.dueDate === toDate) continue;
+      await moveItem(id, toDate);
+    }
+    clearSelection();
+    showToast(`Moved ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+  };
+
+  /**
+   * Bulk delete: removes locally only — no Canvas-side delete, since
+   * confirming a batch of Canvas deletes one-by-one is annoying and
+   * doing them silently is dangerous. Users can delete individual
+   * Canvas items via the per-card trash icon.
+   */
+  const bulkDelete = () => {
+    const ids = Array.from(selectedIds);
+    if (!window.confirm(`Remove ${ids.length} item${ids.length === 1 ? '' : 's'} from the schedule?\n\nCanvas-linked items will reappear on next refresh — delete them individually if you also want them gone in Canvas.`)) return;
+    updateState((s) => {
+      ids.forEach((id) => {
+        delete s.items[id];
+        Object.keys(s.schedule).forEach((d) => {
+          s.schedule[d] = s.schedule[d].filter((x) => x !== id);
+          if (s.schedule[d].length === 0) delete s.schedule[d];
+        });
+        s.unscheduled = s.unscheduled.filter((x) => x !== id);
+      });
+      return s;
+    });
+    clearSelection();
+    showToast(`Removed ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+  };
+
   // ── Item edits ─────────────────────────────────────────────────
 
   const deleteItem = async (id) => {
@@ -991,6 +1060,10 @@ export default function ClassPlannerApp() {
   const isStudent = state.studentView;
   const activeDragItem = draggingId ? state.items[draggingId] : null;
 
+  const selectionCtx = useMemo(() => ({
+    selectedIds, toggle: toggleSelect, isSelectable: !isStudent,
+  }), [selectedIds, toggleSelect, isStudent]);
+
   return (
     <DndContext
       sensors={isStudent ? undefined : sensors}
@@ -999,6 +1072,7 @@ export default function ClassPlannerApp() {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
+    <SelectionProvider value={selectionCtx}>
     <div style={{ minHeight: '100vh', background: T.cream, color: T.ink, fontFamily: FONT_BODY }}>
       <style>{appStyles()}</style>
 
@@ -1151,7 +1225,17 @@ export default function ClassPlannerApp() {
         Saved locally · {Object.keys(state.items).length} items · {state.extraDays.length} added dates
         {state.pendingCreations.length > 0 && ` · ${state.pendingCreations.length} pending`}
       </footer>
+
+      {!isStudent && selectedIds.size > 0 && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onClear={clearSelection}
+          onMove={bulkMoveTo}
+          onDelete={bulkDelete}
+        />
+      )}
     </div>
+    </SelectionProvider>
 
     <DragOverlay dropAnimation={null}>
       {activeDragItem ? <DragOverlayCard item={activeDragItem} /> : null}
