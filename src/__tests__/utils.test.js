@@ -658,6 +658,216 @@ describe('exportTemplate + importTemplate (extraDays)', () => {
   });
 });
 
+// ── exportTemplate / importTemplate (week+position mapping) ──────
+
+describe('exportTemplate + importTemplate (cross-pattern remap)', () => {
+  // Helper: build a state with one assignment on each teaching day,
+  // titled by its date for easy assertion.
+  const buildState = (setup, weekItems) => {
+    // weekItems: { 'YYYY-MM-DD': [titles] }
+    const items = {};
+    const schedule = {};
+    Object.entries(weekItems).forEach(([date, titles]) => {
+      schedule[date] = [];
+      titles.forEach((title) => {
+        const id = `i_${title}`;
+        items[id] = { id, type: 'assign', title };
+        schedule[date].push(id);
+      });
+    });
+    return { setup, items, schedule, holidays: {}, modules: {}, unscheduled: [], extraDays: [] };
+  };
+
+  // Map { date: [titles by item id resolution] } from importTemplate result
+  const titlesByDate = (result) => {
+    const out = {};
+    Object.entries(result.schedule).forEach(([date, ids]) => {
+      out[date] = ids.map((id) => result.items[id].title);
+    });
+    return out;
+  };
+
+  it('TR → MWF: items map by week+position; Friday stays empty', () => {
+    // 2-week TR semester: Jan 6 (Tue), Jan 8 (Thu), Jan 13, Jan 15.
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['TU', 'TH'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-06': ['Wk1-Tue'],
+      '2026-01-08': ['Wk1-Thu'],
+      '2026-01-13': ['Wk2-Tue'],
+      '2026-01-15': ['Wk2-Thu'],
+    });
+    const template = exportTemplate(source);
+    // 2-week MWF semester: Aug 24 (Mon), Aug 26 (Wed), Aug 28 (Fri), Aug 31, Sep 2, Sep 4.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['MO', 'WE', 'FR'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-08-24']).toEqual(['Wk1-Tue']);  // Mon week 1 ← Tue
+    expect(t['2026-08-26']).toEqual(['Wk1-Thu']);  // Wed week 1 ← Thu
+    expect(t['2026-08-28']).toBeUndefined();       // Fri week 1 stays empty
+    expect(t['2026-08-31']).toEqual(['Wk2-Tue']);
+    expect(t['2026-09-02']).toEqual(['Wk2-Thu']);
+    expect(t['2026-09-04']).toBeUndefined();
+  });
+
+  it('MWF → TR: 3-day source compresses to 2-day target with last-day stacking', () => {
+    // 2-week MWF semester
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['MO', 'WE', 'FR'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-05': ['Wk1-Mon'],
+      '2026-01-07': ['Wk1-Wed'],
+      '2026-01-09': ['Wk1-Fri'],
+      '2026-01-12': ['Wk2-Mon'],
+      '2026-01-14': ['Wk2-Wed'],
+      '2026-01-16': ['Wk2-Fri'],
+    });
+    const template = exportTemplate(source);
+    // 2-week TR semester: Aug 25 (Tue), Aug 27 (Thu), Sep 1, Sep 3.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['TU', 'TH'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    // Monday → Tue (pos 0). Wednesday → Thu (pos 1). Friday clamped to Thu (pos 1, last).
+    expect(t['2026-08-25']).toEqual(['Wk1-Mon']);
+    expect(t['2026-08-27']).toEqual(['Wk1-Wed', 'Wk1-Fri']);  // stacked
+    expect(t['2026-09-01']).toEqual(['Wk2-Mon']);
+    expect(t['2026-09-03']).toEqual(['Wk2-Wed', 'Wk2-Fri']);  // stacked
+  });
+
+  it('MWF → Mon-only: everything stacks onto Monday', () => {
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['MO', 'WE', 'FR'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-05': ['Wk1-Mon'],
+      '2026-01-07': ['Wk1-Wed'],
+      '2026-01-09': ['Wk1-Fri'],
+      '2026-01-12': ['Wk2-Mon'],
+      '2026-01-14': ['Wk2-Wed'],
+      '2026-01-16': ['Wk2-Fri'],
+    });
+    const template = exportTemplate(source);
+    // 2-week Mon-only semester
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['MO'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-08-24']).toEqual(['Wk1-Mon', 'Wk1-Wed', 'Wk1-Fri']);
+    expect(t['2026-08-31']).toEqual(['Wk2-Mon', 'Wk2-Wed', 'Wk2-Fri']);
+  });
+
+  it('TR → Mon-only: everything stacks onto Monday', () => {
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['TU', 'TH'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-06': ['Wk1-Tue'],
+      '2026-01-08': ['Wk1-Thu'],
+      '2026-01-13': ['Wk2-Tue'],
+      '2026-01-15': ['Wk2-Thu'],
+    });
+    const template = exportTemplate(source);
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['MO'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-08-24']).toEqual(['Wk1-Tue', 'Wk1-Thu']);
+    expect(t['2026-08-31']).toEqual(['Wk2-Tue', 'Wk2-Thu']);
+  });
+
+  it('same pattern, same length: idempotent', () => {
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['MO', 'WE', 'FR'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-05': ['A'], '2026-01-07': ['B'], '2026-01-09': ['C'],
+      '2026-01-12': ['D'], '2026-01-14': ['E'], '2026-01-16': ['F'],
+    });
+    const template = exportTemplate(source);
+    // Different start date but same MWF pattern + same week count.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['MO', 'WE', 'FR'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-08-24']).toEqual(['A']);
+    expect(t['2026-08-26']).toEqual(['B']);
+    expect(t['2026-08-28']).toEqual(['C']);
+    expect(t['2026-08-31']).toEqual(['D']);
+    expect(t['2026-09-02']).toEqual(['E']);
+    expect(t['2026-09-04']).toEqual(['F']);
+  });
+
+  it('source longer than target: extra weeks dropped (counted)', () => {
+    // 3-week source, 1-week target.
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-23', classDays: ['MO'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-05': ['Wk1'],
+      '2026-01-12': ['Wk2'],
+      '2026-01-19': ['Wk3'],
+    });
+    const template = exportTemplate(source);
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-08-28', classDays: ['MO'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-08-24']).toEqual(['Wk1']);
+    expect(result.droppedExtras).toBe(2); // Wk2 + Wk3
+  });
+
+  it('legacy template (no weekIndex/weekPosition) falls back to index-based placement', () => {
+    // Hand-craft a template that looks like one exported by the
+    // pre-refactor code: only `index` is present, no week fields.
+    const legacyTemplate = {
+      version: 1,
+      classDays: ['MO', 'WE', 'FR'],
+      totalTeachingDays: 6,
+      slots: [
+        { index: 0, dayCode: 'MO', items: [{ type: 'assign', title: 'A' }] },
+        { index: 1, dayCode: 'WE', items: [{ type: 'assign', title: 'B' }] },
+        { index: 2, dayCode: 'FR', items: [{ type: 'assign', title: 'C' }] },
+      ],
+      extraSlots: [],
+      unscheduledItems: [],
+    };
+    const target = { courseTitle: 'tgt', startDate: '2026-01-05', endDate: '2026-01-09', classDays: ['MO', 'WE', 'FR'] };
+    const result = importTemplate(legacyTemplate, target);
+    const t = titlesByDate(result);
+
+    expect(t['2026-01-05']).toEqual(['A']);
+    expect(t['2026-01-07']).toEqual(['B']);
+    expect(t['2026-01-09']).toEqual(['C']);
+  });
+
+  it('exportTemplate emits weekIndex + weekPosition for new templates', () => {
+    const setup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-17', classDays: ['MO', 'WE', 'FR'] };
+    const state = buildState(setup, {
+      '2026-01-05': ['A'], '2026-01-07': ['B'], '2026-01-09': ['C'],
+      '2026-01-12': ['D'], '2026-01-14': ['E'], '2026-01-16': ['F'],
+    });
+    const template = exportTemplate(state);
+    expect(template.slots).toHaveLength(6);
+    expect(template.slots[0]).toMatchObject({ weekIndex: 0, weekPosition: 0, dayCode: 'MO' });
+    expect(template.slots[1]).toMatchObject({ weekIndex: 0, weekPosition: 1, dayCode: 'WE' });
+    expect(template.slots[2]).toMatchObject({ weekIndex: 0, weekPosition: 2, dayCode: 'FR' });
+    expect(template.slots[3]).toMatchObject({ weekIndex: 1, weekPosition: 0, dayCode: 'MO' });
+    expect(template.slots[5]).toMatchObject({ weekIndex: 1, weekPosition: 2, dayCode: 'FR' });
+  });
+
+  it('holidays + modules carry through cross-pattern remaps', () => {
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-09', classDays: ['MO', 'WE', 'FR'] };
+    const source = {
+      setup: sourceSetup,
+      items: { x: { id: 'x', type: 'assign', title: 'Reading' } },
+      schedule: { '2026-01-05': ['x'] },
+      holidays: { '2026-01-09': 'Snow day' },
+      modules: { '2026-01-05': 'Unit 1' },
+      unscheduled: [], extraDays: [],
+    };
+    const template = exportTemplate(source);
+    // Target has TR pattern, so source's Friday holiday slot (weekIndex 0,
+    // weekPosition 2) clamps to Thursday (target's last position in week 0).
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-08-29', classDays: ['TU', 'TH'] };
+    const result = importTemplate(template, target);
+
+    expect(result.modules['2026-08-25']).toBe('Unit 1');     // Mon → Tue, week 0 pos 0
+    expect(result.holidays['2026-08-27']).toBe('Snow day');  // Fri → Thu (clamped)
+  });
+});
+
 // ── parseICal ────────────────────────────────────────────────────
 
 describe('parseICal', () => {
