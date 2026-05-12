@@ -246,8 +246,27 @@ export default function ClassPlannerApp() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // ── Window focus: sync pending assignment creations ─────────────
+  // ── Service factories ──────────────────────────────────────────
+  // These useMemo calls MUST run before the loading-screen early
+  // return below — every hook has to fire on every render, or React
+  // throws "Rendered more hooks than during the previous render."
+
   const syncRef = useRef(null);
+
+  const canvasSync = useMemo(
+    () => createCanvasSync({ stateRef, updateState, setState, showToast, setRefreshing, freshState }),
+    [updateState, setState, showToast]
+  );
+  const { connectCanvas, switchCourse, syncFromCanvas, refreshFromCanvas } = canvasSync;
+  syncRef.current = syncFromCanvas;
+
+  const courseClone = useMemo(
+    () => createCourseClone({ stateRef, updateState, showToast }),
+    [updateState, showToast]
+  );
+  const { cloneCourseFrom } = courseClone;
+
+  // ── Window focus: sync pending assignment creations ─────────────
   useEffect(() => {
     const onFocus = () => {
       const s = stateRef.current;
@@ -921,27 +940,6 @@ export default function ClassPlannerApp() {
       showToast('Could not copy — try copying from the address bar', 'err');
     }
   };
-
-  // ── Canvas connect / sync / refresh ────────────────────────────
-  // The four handlers below come from services/canvas-sync.js. They're
-  // memoized so the function identities stay stable across renders.
-
-  const canvasSync = useMemo(
-    () => createCanvasSync({ stateRef, updateState, setState, showToast, setRefreshing, freshState }),
-    [updateState, setState, showToast]
-  );
-  const { connectCanvas, switchCourse, syncFromCanvas, refreshFromCanvas } = canvasSync;
-  syncRef.current = syncFromCanvas;
-
-  // ── Course clone ───────────────────────────────────────────────
-  // Orchestration lives in services/course-clone.js. Same memoized
-  // factory pattern as canvas-sync.
-
-  const courseClone = useMemo(
-    () => createCourseClone({ stateRef, updateState, showToast }),
-    [updateState, showToast]
-  );
-  const { cloneCourseFrom } = courseClone;
 
   // ══════════════════════════════════════════════════════════════
   // RENDER
