@@ -88,6 +88,16 @@ export function localDateStr(isoUtc) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * Convert a UTC ISO timestamp to a local HH:MM string (24-hour).
+ * Used to round-trip the time-of-day portion of Canvas due dates back
+ * to a `dueTime` field on planner items.
+ */
+export function localTimeStr(isoUtc) {
+  const d = new Date(isoUtc);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** Format "Jan 15" */
 export function fmtMonthDay(iso) {
   if (!iso) return '';

@@ -265,9 +265,30 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
         </div>
       )}
 
-      <div style={{ marginTop: 4, fontFamily: FONT_MONO, fontSize: '11px', color: T.muted }}>
-        {item.points ? `${item.points} pts` : 'no points'}
-        {item.dueDate && <> · due {fmtMonthDay(item.dueDate)}</>}
+      <div style={{ marginTop: 4, fontFamily: FONT_MONO, fontSize: '11px', color: T.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span>{item.points ? `${item.points} pts` : 'no points'}</span>
+        {item.dueDate && (
+          <>
+            <span>· due {fmtMonthDay(item.dueDate)}</span>
+            {!isStudent ? (
+              <input
+                type="time"
+                value={item.dueTime || ''}
+                onChange={(e) => onUpdate(item.id, { dueTime: e.target.value || null })}
+                aria-label="Due time (defaults to 11:59 PM)"
+                title="Due time (blank = 11:59 PM)"
+                style={{
+                  fontFamily: FONT_MONO, fontSize: '10px',
+                  border: `1px solid ${T.border}`, borderRadius: 2,
+                  background: T.paper, color: T.ink,
+                  padding: '0 4px', width: 90,
+                }}
+              />
+            ) : item.dueTime ? (
+              <span>at {item.dueTime}</span>
+            ) : null}
+          </>
+        )}
       </div>
     </>
   );

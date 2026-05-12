@@ -798,6 +798,16 @@ export default function ClassPlannerApp() {
         state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, patch.title
       ).catch(() => {});
     }
+    // Sync dueTime changes by re-pushing the full due_at. Skips if the
+    // item has no date — Canvas only accepts due_at as a datetime, and
+    // there's no useful "time but no date" semantics.
+    if ('dueTime' in patch && item?.canvasId && item?.dueDate &&
+        state.canvas.connected && state.canvas.courseId) {
+      const due = new Date(`${item.dueDate}T${patch.dueTime || '23:59'}:00`).toISOString();
+      CanvasAPI.setDueDate(
+        state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, due
+      ).catch(() => {});
+    }
   };
 
   // ── Move item between days ─────────────────────────────────────
@@ -832,7 +842,7 @@ export default function ClassPlannerApp() {
     if (toDate && item?.type === 'assign' && item.canvasId &&
         state.canvas.connected && state.canvas.token && state.canvas.baseUrl && state.canvas.courseId) {
       try {
-        const due = new Date(toDate + 'T23:59:00').toISOString();
+        const due = new Date(`${toDate}T${item.dueTime || '23:59'}:00`).toISOString();
         await CanvasAPI.setDueDate(state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, due);
         didCanvasSync = true;
       } catch (e) { canvasError = e.message; }

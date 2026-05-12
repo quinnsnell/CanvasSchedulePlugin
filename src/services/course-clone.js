@@ -34,7 +34,7 @@
 import { CanvasAPI } from '../canvas-api.js';
 import { Store } from '../utils/store.js';
 import { uid } from '../utils/uid.js';
-import { localDateStr, generateClassDays } from '../utils/dates.js';
+import { localDateStr, localTimeStr, generateClassDays } from '../utils/dates.js';
 import { exportTemplate, importTemplate } from '../utils/template.js';
 import { rewriteEmbeddedLinks } from '../utils/link-rewrite.js';
 import { debugLog } from '../utils/debug.js';
@@ -400,7 +400,7 @@ export function createCourseClone({ stateRef, updateState, showToast }) {
       const batch = toPush.slice(i, i + DATE_PUSH_BATCH_SIZE);
       await Promise.all(batch.map(async (it) => {
         try {
-          const due = new Date(it.dueDate + 'T23:59:00').toISOString();
+          const due = new Date(`${it.dueDate}T${it.dueTime || '23:59'}:00`).toISOString();
           await CanvasAPI.setDueDate(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, it.canvasId, due);
           datePushed++;
         } catch (e) {
@@ -639,9 +639,10 @@ export function createCourseClone({ stateRef, updateState, showToast }) {
             }
             const id = uid();
             const due = a.due_at ? localDateStr(a.due_at) : null;
+            const dueTime = a.due_at ? (localTimeStr(a.due_at) === '23:59' ? null : localTimeStr(a.due_at)) : null;
             st.items[id] = {
               id, type: 'assign', title: a.name, points: a.points_possible || 0,
-              canvasId: a.id, htmlUrl: a.html_url, dueDate: due,
+              canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime,
               groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a),
             };
             if (due) {

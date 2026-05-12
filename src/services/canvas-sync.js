@@ -14,7 +14,7 @@
 
 import { CanvasAPI } from '../canvas-api.js';
 import { uid } from '../utils/uid.js';
-import { localDateStr, generateClassDays } from '../utils/dates.js';
+import { localDateStr, localTimeStr, generateClassDays } from '../utils/dates.js';
 import { Store } from '../utils/store.js';
 import { GROUP_COLORS } from '../theme.js';
 
@@ -26,6 +26,18 @@ import { GROUP_COLORS } from '../theme.js';
  */
 export const assignmentIsQuiz = (a) =>
   Boolean(a?.is_quiz_lti_assignment || a?.quiz_id);
+
+/**
+ * Pull the local time portion of a Canvas due_at and return it as
+ * `HH:MM`, but only when the time differs from our implicit 23:59
+ * default. Returning `null` for the default keeps the time-input
+ * unobtrusive on the typical "due end of day" assignment.
+ */
+function dueTimeFromCanvas(due_at) {
+  if (!due_at) return null;
+  const t = localTimeStr(due_at);
+  return t === '23:59' ? null : t;
+}
 
 /**
  * Pull the title/start/end dates from a Canvas course object into
@@ -131,6 +143,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
           existing.isQuiz = assignmentIsQuiz(a);
+          existing.dueTime = dueTimeFromCanvas(a.due_at);
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           return;
         }
@@ -150,7 +163,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
           if (match) claimedPending.add(match.id);
         }
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
           s.schedule[due] = s.schedule[due] || [];
@@ -236,6 +249,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
           existing.isQuiz = assignmentIsQuiz(a);
+          existing.dueTime = dueTimeFromCanvas(a.due_at);
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           const newDue = a.due_at ? localDateStr(a.due_at) : null;
           if (newDue && newDue !== existing.dueDate) {
@@ -253,7 +267,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
         }
         const id = uid();
         const due = a.due_at ? localDateStr(a.due_at) : null;
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) { s.extraDays.push(due); autoAdded++; }
           s.schedule[due] = s.schedule[due] || [];
