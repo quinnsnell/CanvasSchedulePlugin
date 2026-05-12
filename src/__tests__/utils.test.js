@@ -15,11 +15,14 @@ import {
   fmtMonthDay,
   fmtFull,
   generateICal,
+  parseICal,
+  parseCSV,
   exportTemplate,
   importTemplate,
   rewriteEmbeddedLinks,
   Store,
 } from '../utils.js';
+import { assignmentIsQuiz } from '../services/canvas-sync.js';
 
 // ── DAY_CODES ────────────────────────────────────────────────────
 
@@ -652,5 +655,237 @@ describe('exportTemplate + importTemplate (extraDays)', () => {
     const template = exportTemplate(sourceState);
     expect(template.extraSlots).toHaveLength(0);
     expect(template.slots.some((s) => s.items.some((i) => i.title === 'HW1'))).toBe(true);
+  });
+});
+
+// ── parseICal ────────────────────────────────────────────────────
+
+describe('parseICal', () => {
+  // Build VCALENDAR text from an array of `BEGIN:VEVENT...END:VEVENT` chunks.
+  const wrap = (events) => [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN',
+    ...events,
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('returns empty array for empty input', () => {
+    expect(parseICal('')).toEqual([]);
+  });
+
+  it('returns empty array when there are no VEVENTs', () => {
+    expect(parseICal(wrap([]))).toEqual([]);
+  });
+
+  it('parses a single DATE-format event', () => {
+    const text = wrap([
+      'BEGIN:VEVENT',
+      'SUMMARY:Reading 1',
+      'DTSTART;VALUE=DATE:20260115',
+      'END:VEVENT',
+    ]);
+    expect(parseICal(text)).toEqual([{ title: 'Reading 1', date: '2026-01-15' }]);
+  });
+
+  it('parses a DATE-TIME format event (extracts the date portion)', () => {
+    const text = wrap([
+      'BEGIN:VEVENT',
+      'SUMMARY:Class meets',
+      'DTSTART:20260115T143000Z',
+      'END:VEVENT',
+    ]);
+    expect(parseICal(text)[0].date).toBe('2026-01-15');
+  });
+
+  it('parses multiple events', () => {
+    const text = wrap([
+      'BEGIN:VEVENT', 'SUMMARY:Event A', 'DTSTART;VALUE=DATE:20260115', 'END:VEVENT',
+      'BEGIN:VEVENT', 'SUMMARY:Event B', 'DTSTART;VALUE=DATE:20260116', 'END:VEVENT',
+    ]);
+    const events = parseICal(text);
+    expect(events).toHaveLength(2);
+    expect(events.map((e) => e.title)).toEqual(['Event A', 'Event B']);
+  });
+
+  it('extracts DESCRIPTION when present', () => {
+    const text = wrap([
+      'BEGIN:VEVENT',
+      'SUMMARY:Quiz',
+      'DESCRIPTION:Bring your textbook',
+      'DTSTART;VALUE=DATE:20260115',
+      'END:VEVENT',
+    ]);
+    expect(parseICal(text)[0]).toEqual({
+      title: 'Quiz',
+      date: '2026-01-15',
+      description: 'Bring your textbook',
+    });
+  });
+
+  it('unescapes RFC 5545 sequences in SUMMARY and DESCRIPTION', () => {
+    const text = wrap([
+      'BEGIN:VEVENT',
+      'SUMMARY:Read chapters 1\\, 2\\; and 3',
+      'DESCRIPTION:Line one\\nLine two',
+      'DTSTART;VALUE=DATE:20260115',
+      'END:VEVENT',
+    ]);
+    const ev = parseICal(text)[0];
+    expect(ev.title).toBe('Read chapters 1, 2; and 3');
+    expect(ev.description).toBe('Line one\nLine two');
+  });
+
+  it('unfolds RFC 5545 continuation lines (CRLF + whitespace)', () => {
+    // SUMMARY split across two lines via line-folding.
+    const text = [
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'SUMMARY:Very long event title that wraps',
+      ' onto a second line',
+      'DTSTART;VALUE=DATE:20260115',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+    expect(parseICal(text)[0].title).toBe('Very long event title that wrapsonto a second line');
+  });
+
+  it('skips events missing DTSTART or SUMMARY', () => {
+    const text = wrap([
+      'BEGIN:VEVENT', 'SUMMARY:No date here', 'END:VEVENT',
+      'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20260115', 'END:VEVENT',
+      'BEGIN:VEVENT', 'SUMMARY:Good one', 'DTSTART;VALUE=DATE:20260116', 'END:VEVENT',
+    ]);
+    const events = parseICal(text);
+    expect(events).toHaveLength(1);
+    expect(events[0].title).toBe('Good one');
+  });
+
+  it('handles LF-only line endings as well as CRLF', () => {
+    const text = [
+      'BEGIN:VCALENDAR',
+      'BEGIN:VEVENT',
+      'SUMMARY:LF endings',
+      'DTSTART;VALUE=DATE:20260115',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\n');
+    expect(parseICal(text)).toHaveLength(1);
+  });
+});
+
+// ── parseCSV ─────────────────────────────────────────────────────
+
+describe('parseCSV', () => {
+  it('returns empty array for empty input', () => {
+    expect(parseCSV('')).toEqual([]);
+  });
+
+  it('returns empty array for header-only input', () => {
+    expect(parseCSV('date,title')).toEqual([]);
+  });
+
+  it('parses a basic two-column CSV', () => {
+    const csv = 'date,title\n2026-01-15,Reading 1\n2026-01-22,Reading 2';
+    expect(parseCSV(csv)).toEqual([
+      { date: '2026-01-15', title: 'Reading 1' },
+      { date: '2026-01-22', title: 'Reading 2' },
+    ]);
+  });
+
+  it('matches header aliases for title (summary, name, event)', () => {
+    expect(parseCSV('date,summary\n2026-01-15,A')[0].title).toBe('A');
+    expect(parseCSV('date,name\n2026-01-15,B')[0].title).toBe('B');
+    expect(parseCSV('date,event\n2026-01-15,C')[0].title).toBe('C');
+  });
+
+  it('captures description when a description column is present', () => {
+    const csv = 'date,title,description\n2026-01-15,Quiz,Bring textbook';
+    expect(parseCSV(csv)).toEqual([
+      { date: '2026-01-15', title: 'Quiz', description: 'Bring textbook' },
+    ]);
+  });
+
+  it('returns empty when required columns are missing', () => {
+    expect(parseCSV('foo,bar\n1,2')).toEqual([]);
+    expect(parseCSV('date,foo\n2026-01-15,bar')).toEqual([]);
+    expect(parseCSV('title,foo\nA,bar')).toEqual([]);
+  });
+
+  it('handles quoted fields containing commas', () => {
+    const csv = 'date,title\n2026-01-15,"Hello, world"';
+    expect(parseCSV(csv)[0].title).toBe('Hello, world');
+  });
+
+  it('handles quoted fields containing newlines', () => {
+    const csv = 'date,title\n2026-01-15,"Line 1\nLine 2"';
+    expect(parseCSV(csv)[0].title).toBe('Line 1\nLine 2');
+  });
+
+  it('handles escaped double quotes ("")', () => {
+    const csv = 'date,title\n2026-01-15,"She said ""hi"""';
+    expect(parseCSV(csv)[0].title).toBe('She said "hi"');
+  });
+
+  it('normalizes YYYY/MM/DD to YYYY-MM-DD', () => {
+    const csv = 'date,title\n2026/01/15,Event';
+    expect(parseCSV(csv)[0].date).toBe('2026-01-15');
+  });
+
+  it('normalizes M/D/YYYY to YYYY-MM-DD with zero-padding', () => {
+    const csv = 'date,title\n1/5/2026,Event';
+    expect(parseCSV(csv)[0].date).toBe('2026-01-05');
+  });
+
+  it('skips rows missing date or title', () => {
+    const csv = 'date,title\n,No date\n2026-01-15,\n2026-01-15,Good';
+    const events = parseCSV(csv);
+    expect(events).toHaveLength(1);
+    expect(events[0].title).toBe('Good');
+  });
+
+  it('skips rows whose date can\'t be normalized', () => {
+    const csv = 'date,title\nnot-a-date,Bad\n2026-01-15,Good';
+    const events = parseCSV(csv);
+    expect(events.map((e) => e.title)).toEqual(['Good']);
+  });
+
+  it('case-insensitive on header names', () => {
+    const csv = 'DATE,Title\n2026-01-15,Event';
+    expect(parseCSV(csv)[0].title).toBe('Event');
+  });
+
+  it('handles CRLF line endings', () => {
+    const csv = 'date,title\r\n2026-01-15,Event';
+    expect(parseCSV(csv)).toHaveLength(1);
+  });
+});
+
+// ── assignmentIsQuiz ─────────────────────────────────────────────
+
+describe('assignmentIsQuiz', () => {
+  it('returns false for a plain assignment', () => {
+    expect(assignmentIsQuiz({ id: 1, name: 'Homework' })).toBe(false);
+  });
+
+  it('returns true when is_quiz_lti_assignment is set (New Quiz)', () => {
+    expect(assignmentIsQuiz({ id: 1, name: 'Quiz', is_quiz_lti_assignment: true })).toBe(true);
+  });
+
+  it('returns true when quiz_id is set (Classic Quiz)', () => {
+    expect(assignmentIsQuiz({ id: 1, name: 'Quiz', quiz_id: 42 })).toBe(true);
+  });
+
+  it('returns true when both flags are set', () => {
+    expect(assignmentIsQuiz({ is_quiz_lti_assignment: true, quiz_id: 42 })).toBe(true);
+  });
+
+  it('returns false for null or undefined input', () => {
+    expect(assignmentIsQuiz(null)).toBe(false);
+    expect(assignmentIsQuiz(undefined)).toBe(false);
+  });
+
+  it('returns false for objects with falsy quiz_id (0, null, "")', () => {
+    expect(assignmentIsQuiz({ quiz_id: 0 })).toBe(false);
+    expect(assignmentIsQuiz({ quiz_id: null })).toBe(false);
+    expect(assignmentIsQuiz({ quiz_id: '' })).toBe(false);
   });
 });
