@@ -6,6 +6,8 @@
  * localDateStr when crossing back into local-date space.
  */
 
+import { ADDABLE_DAYS_MAX } from '../config.js';
+
 export const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 export const DAY_FULL = { SU: 'Sunday', MO: 'Monday', TU: 'Tuesday', WE: 'Wednesday', TH: 'Thursday', FR: 'Friday', SA: 'Saturday' };
 export const DAY_SHORT = { SU: 'Sun', MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat' };
@@ -54,7 +56,7 @@ export function getAddableDatesAfter(date, allDaysSet, _semesterEnd) {
   const cur = new Date(date + 'T00:00:00');
   cur.setDate(cur.getDate() + 1);
   let safety = 0;
-  while (safety++ < 21) {
+  while (safety++ < ADDABLE_DAYS_MAX) {
     const iso = cur.toISOString().slice(0, 10);
     if (allDaysSet.has(iso)) break;
     out.push(iso);

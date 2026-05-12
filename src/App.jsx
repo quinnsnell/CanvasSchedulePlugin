@@ -23,6 +23,14 @@ import {
   localDateStr, generateICal, exportTemplate, importTemplate, rewriteEmbeddedLinks, Store,
 } from './utils.js';
 import { CanvasAPI } from './canvas-api.js';
+import {
+  TOAST_DISMISS_MS, PUBLISH_BANNER_DISMISS_MS,
+  DATE_PUSH_BATCH_SIZE, DATE_PUSH_SLEEP_MS,
+  WIPE_DELETE_BATCH_SIZE, WIPE_DELETE_SLEEP_MS,
+  CLONE_POLL_FAST_MS, CLONE_POLL_SLOW_MS, CLONE_POLL_VERY_SLOW_MS,
+  CLONE_POLL_FAST_WINDOW_SEC, CLONE_POLL_SLOW_WINDOW_SEC,
+  UNDO_STACK_LIMIT,
+} from './config.js';
 import renderScheduleHtml from './render-schedule-html.js';
 import Header from './components/Header.jsx';
 import ScheduleTable from './components/ScheduleTable.jsx';
@@ -188,7 +196,7 @@ export default function ClassPlannerApp() {
   // ── Toast notifications ────────────────────────────────────────
   const showToast = (msg, kind = 'ok') => {
     setToast({ msg, kind });
-    setTimeout(() => setToast(null), 2400);
+    setTimeout(() => setToast(null), TOAST_DISMISS_MS);
   };
 
   // ── Derived data ───────────────────────────────────────────────
@@ -361,7 +369,7 @@ export default function ClassPlannerApp() {
   const updateState = (fn, skipUndo) => {
     setState((s) => {
       if (!skipUndo) {
-        setUndoStack((stack) => [...stack.slice(-29), structuredClone(s)]);
+        setUndoStack((stack) => [...stack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(s)]);
         setRedoStack([]);
       }
       return fn(structuredClone(s));
@@ -371,7 +379,7 @@ export default function ClassPlannerApp() {
   const undo = () => {
     if (undoStack.length === 0) return;
     setState((current) => {
-      setRedoStack((rStack) => [...rStack.slice(-29), structuredClone(current)]);
+      setRedoStack((rStack) => [...rStack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(current)]);
       return undoStack[undoStack.length - 1];
     });
     setUndoStack((stack) => stack.slice(0, -1));
@@ -382,7 +390,7 @@ export default function ClassPlannerApp() {
   const redo = () => {
     if (redoStack.length === 0) return;
     setState((current) => {
-      setUndoStack((uStack) => [...uStack.slice(-29), structuredClone(current)]);
+      setUndoStack((uStack) => [...uStack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(current)]);
       return redoStack[redoStack.length - 1];
     });
     setRedoStack((stack) => stack.slice(0, -1));
@@ -873,7 +881,7 @@ export default function ClassPlannerApp() {
       setStudentEmbed(pageUrl);
       setLastPublishedUrl(pageUrl);
       try { localStorage.setItem('planner-last-published-url', pageUrl); } catch {}
-      setTimeout(() => setStudentEmbed(null), 12000);
+      setTimeout(() => setStudentEmbed(null), PUBLISH_BANNER_DISMISS_MS);
       showToast('Published schedule to Canvas');
     } catch (e) {
       showToast(`Publish failed: ${e.message}`, 'err');
@@ -1210,16 +1218,13 @@ export default function ClassPlannerApp() {
     if (total === 0) return { total: 0, deleted: 0, failures };
 
     let done = 0;
-    const BATCH_SIZE = 5;
-    const SLEEP_MS = 1500;
-
     for (const lt of lists) {
       if (lt.listError) {
         failures.push({ type: lt.key, name: '(list error)', error: lt.listError });
         continue;
       }
-      for (let i = 0; i < lt.items.length; i += BATCH_SIZE) {
-        const batch = lt.items.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < lt.items.length; i += WIPE_DELETE_BATCH_SIZE) {
+        const batch = lt.items.slice(i, i + WIPE_DELETE_BATCH_SIZE);
         await Promise.all(batch.map(async (item) => {
           try {
             await lt.deleteOne(item);
@@ -1232,8 +1237,8 @@ export default function ClassPlannerApp() {
           done += 1;
           onProgress?.({ done, total });
         }));
-        if (i + BATCH_SIZE < lt.items.length) {
-          await new Promise((r) => setTimeout(r, SLEEP_MS));
+        if (i + WIPE_DELETE_BATCH_SIZE < lt.items.length) {
+          await new Promise((r) => setTimeout(r, WIPE_DELETE_SLEEP_MS));
         }
       }
     }
@@ -1511,11 +1516,8 @@ export default function ClassPlannerApp() {
     //
     // Throttled: bounded parallelism (small batch) plus a sleep between
     // batches, since a single course copy can produce 20-50 setDueDate
-    // calls and Canvas's per-token rate limit is shared across requests
-    // (default ~700/min). Conservative values keep us well under that
-    // even when other tabs are using the same token.
-    const DATE_PUSH_BATCH_SIZE = 5;
-    const DATE_PUSH_SLEEP_MS = 1500;
+    // calls and Canvas's per-token rate limit is shared across requests.
+    // See config.js for the actual numbers.
     const toPush = Object.values(result.items).filter(
       (it) => it.type === 'assign' && it.canvasId && it.dueDate
     );
@@ -1686,9 +1688,9 @@ export default function ClassPlannerApp() {
     // then 30s after that. No hard timeout — Canvas may take a while on
     // large courses, especially if there are many files.
     const pickInterval = (elapsedSec) => {
-      if (elapsedSec < 120) return 3000;
-      if (elapsedSec < 600) return 10000;
-      return 30000;
+      if (elapsedSec < CLONE_POLL_FAST_WINDOW_SEC) return CLONE_POLL_FAST_MS;
+      if (elapsedSec < CLONE_POLL_SLOW_WINDOW_SEC) return CLONE_POLL_SLOW_MS;
+      return CLONE_POLL_VERY_SLOW_MS;
     };
 
     const finishWithSchedule = async () => {
