@@ -396,6 +396,26 @@ export default function ClassPlannerApp() {
     setDraggingId(null);
   }, []);
 
+  // ── Bulk selection (must stay above the early return — Rules of Hooks) ──
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape' && selectedIds.size > 0) clearSelection();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedIds.size, clearSelection]);
+
   // ── Loading screen ─────────────────────────────────────────────
   if (!loaded || !state) {
     return (
@@ -770,26 +790,8 @@ export default function ClassPlannerApp() {
     showToast(`Imported ${events.length} event${events.length !== 1 ? 's' : ''}`);
   };
 
-  // ── Bulk selection ────────────────────────────────────────────
-
-  const toggleSelect = useCallback((id) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
-
-  // Esc key clears selection — matches the convention of most file managers.
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key === 'Escape' && selectedIds.size > 0) clearSelection();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [selectedIds.size, clearSelection]);
+  // ── Bulk selection actions (handlers below early return; hooks for
+  //    selection live above it. See Rules of Hooks block earlier.) ─
 
   /**
    * Bulk move: re-target every selected item to `toDate`. Skips items that
