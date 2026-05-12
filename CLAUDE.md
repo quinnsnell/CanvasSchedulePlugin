@@ -140,7 +140,7 @@ Opens `<base>/courses/<id>/assignments/new` in a new tab and pushes a `pendingCr
 
 ## Deployment
 
-`npm run build` produces `dist/`. Host on any static service. Embed in Canvas via iframe in a Page. Your Canvas admin may need to whitelist the host for iframe embedding (most Canvas instances allow same-institution domains by default, but external ones often don't).
+`pnpm build` produces `dist/`. Host on any static service. Embed in Canvas via iframe in a Page. Your Canvas admin may need to whitelist the host for iframe embedding (most Canvas instances allow same-institution domains by default, but external ones often don't).
 
 ## Conventions
 

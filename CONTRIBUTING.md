@@ -7,8 +7,8 @@ Thanks for your interest in contributing! This is a small, focused project so th
 ```bash
 git clone https://github.com/<your-fork>/CanvasSchedulePlugin.git
 cd CanvasSchedulePlugin
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 The app runs at http://localhost:5173. To connect to Canvas during development, Vite's built-in proxy handles CORS -- just enter your Canvas URL and token in the app's cloud panel.

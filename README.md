@@ -59,8 +59,8 @@ See **[INSTALL.md](./INSTALL.md)** for full setup instructions, including how to
 ## Quick start
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open http://localhost:5173.
@@ -81,7 +81,7 @@ For development with Canvas API proxying (avoids CORS issues):
 ## Deployment
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Upload `dist/` to any static host (GitHub Pages, Netlify, Vercel, your university web space). The `vite.config.js` uses `base: './'` so the build works from any path.

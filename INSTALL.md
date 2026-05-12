@@ -94,7 +94,7 @@ Your Canvas Personal Access Token is sent through the proxy in the request heade
 # Fork via GitHub UI, then clone your fork:
 git clone https://github.com/YOUR-USERNAME/CanvasSchedulePlugin.git
 cd CanvasSchedulePlugin
-npm install
+pnpm install
 ```
 
 ### Step 2: Deploy the CORS proxy
@@ -103,7 +103,7 @@ The CORS proxy is a small Cloudflare Worker (~50 lines) that forwards Canvas API
 
 ```bash
 # Install Wrangler (Cloudflare's CLI) if you don't have it
-npm install -g wrangler
+pnpm add -g wrangler
 
 # Authenticate with Cloudflare
 wrangler login
@@ -151,7 +151,7 @@ To run the app locally with Canvas API proxying through Vite's dev server:
 Or manually:
 
 ```bash
-VITE_CANVAS_URL=https://youruniversity.instructure.com npm run dev
+VITE_CANVAS_URL=https://youruniversity.instructure.com pnpm dev
 ```
 
 Open http://localhost:5173. In dev mode, Vite proxies Canvas API requests directly — no CORS proxy needed.
@@ -159,7 +159,7 @@ Open http://localhost:5173. In dev mode, Vite proxies Canvas API requests direct
 ### Running tests
 
 ```bash
-npm test
+pnpm test
 ```
 
 ## Sharing the student schedule
