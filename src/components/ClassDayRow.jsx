@@ -5,7 +5,8 @@
  * AddDayPopover — dropdown for picking a non-teaching date to add.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
@@ -29,6 +30,7 @@ export default function ClassDayRow({
   assignmentGroups,
 }) {
   const [showAddDay, setShowAddDay] = useState(false);
+  const addDayTriggerRef = useRef(null);
 
   const d = new Date(date + 'T00:00:00');
   const weekShade = (weekIdx ?? 0) % 2 === 1;
@@ -77,7 +79,7 @@ export default function ClassDayRow({
         {/* Day management tools */}
         {!isStudent && (
           <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <div style={{ position: 'relative' }}>
+            <div ref={addDayTriggerRef} style={{ position: 'relative' }}>
               <DayToolBtn
                 onClick={() => setShowAddDay((v) => !v)}
                 title="Add a non-teaching date after this one"
@@ -87,6 +89,7 @@ export default function ClassDayRow({
               </DayToolBtn>
               {showAddDay && (
                 <AddDayPopover
+                  triggerRef={addDayTriggerRef}
                   dates={addableDates}
                   onPick={(dt) => { onAddExtraDay(dt); setShowAddDay(false); }}
                   onClose={() => setShowAddDay(false)}
@@ -150,6 +153,7 @@ function ContentColumn({
   assignmentGroups,
 }) {
   const [showNoteMenu, setShowNoteMenu] = useState(false);
+  const noteTriggerRef = useRef(null);
 
   const { isOver, setNodeRef } = useDroppable({
     id: `day:${date}`,
@@ -196,12 +200,13 @@ function ContentColumn({
       {/* Add note / assignment buttons */}
       {!isStudent && !holidayLabel && (
         <div className="day-tools" style={{ marginTop: 'auto', paddingTop: 6 }}>
-          <div style={{ position: 'relative' }}>
+          <div ref={noteTriggerRef} style={{ position: 'relative' }}>
             <DayToolBtn onClick={() => setShowNoteMenu((v) => !v)} title="Add a note">
               <FileText size={11} /> Note
             </DayToolBtn>
             {showNoteMenu && (
               <NoteMenuPopover
+                triggerRef={noteTriggerRef}
                 onAddNote={() => { onAddNote(); setShowNoteMenu(false); }}
                 onAddRecurring={() => { onShowRecurringModal(); setShowNoteMenu(false); }}
                 onClose={() => setShowNoteMenu(false)}
@@ -230,25 +235,54 @@ function ContentColumn({
 
 // ── Note Menu Popover ─────────────────────────────────────────
 
-function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
+/**
+ * Compute viewport-anchored position for a popover that renders next to a
+ * trigger element. Returns `{ top, left }` for `position: fixed`.
+ *
+ * Prefers below the trigger; flips above if there's no room. Clamps left
+ * so the popover doesn't extend past the right edge. Always falls within
+ * the viewport with an 8px margin.
+ */
+function computePopoverPosition(triggerRect, popoverRect, margin = 8) {
+  let top = triggerRect.bottom + 4;
+  if (top + popoverRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, triggerRect.top - popoverRect.height - 4);
+  }
+  let left = triggerRect.left;
+  if (left + popoverRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - popoverRect.width - margin);
+  }
+  return { top, left };
+}
+
+function NoteMenuPopover({ triggerRef, onAddNote, onAddRecurring, onClose }) {
   const ref = useRef(null);
-  const [flipUp, setFlipUp] = useState(false);
+  // Render off-screen on first paint, measure, then snap to position.
+  const [pos, setPos] = useState({ top: -9999, left: -9999, opacity: 0 });
+
+  useLayoutEffect(() => {
+    if (!ref.current || !triggerRef?.current) return;
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const popoverRect = ref.current.getBoundingClientRect();
+    const computed = computePopoverPosition(triggerRect, popoverRect);
+    setPos({ ...computed, opacity: 1 });
+  }, [triggerRef]);
 
   useEffect(() => {
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)
+          && !triggerRef?.current?.contains(e.target)) {
+        onClose();
+      }
+    };
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
-    // Flip above the trigger if rendering below would overflow the viewport.
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight - 8) setFlipUp(true);
-    }
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   const btnStyle = {
     display: 'flex', alignItems: 'center', gap: 8,
@@ -257,14 +291,13 @@ function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
     background: 'transparent', border: 'none', borderRadius: 2, cursor: 'pointer',
   };
 
-  return (
+  return createPortal(
     <div ref={ref} style={{
-      position: 'absolute',
-      ...(flipUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }),
-      left: 0,
+      position: 'fixed', top: pos.top, left: pos.left, opacity: pos.opacity,
       background: T.paper, border: `1px solid ${T.borderStrong}`, borderRadius: 4,
-      boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 30,
+      boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 50,
       minWidth: 180, padding: 4,
+      transition: 'opacity 80ms',
     }}>
       <button onClick={onAddNote} style={btnStyle}
         onMouseOver={(e) => (e.currentTarget.style.background = T.inkBlueSoft)}
@@ -276,41 +309,50 @@ function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
         onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}>
         <Repeat size={13} /> Add recurring note
       </button>
-    </div>
+    </div>,
+    document.body
   );
 }
 
 // ── Add Day Popover ────────────────────────────────────────────
 
-function AddDayPopover({ dates, onPick, onClose }) {
+function AddDayPopover({ triggerRef, dates, onPick, onClose }) {
   const ref = useRef(null);
-  const [flipUp, setFlipUp] = useState(false);
+  const [pos, setPos] = useState({ top: -9999, left: -9999, opacity: 0 });
+
+  useLayoutEffect(() => {
+    if (!ref.current || !triggerRef?.current) return;
+    const triggerRect = triggerRef.current.getBoundingClientRect();
+    const popoverRect = ref.current.getBoundingClientRect();
+    const computed = computePopoverPosition(triggerRect, popoverRect);
+    setPos({ ...computed, opacity: 1 });
+  }, [triggerRef]);
 
   useEffect(() => {
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const onDoc = (e) => {
+      if (ref.current && !ref.current.contains(e.target)
+          && !triggerRef?.current?.contains(e.target)) {
+        onClose();
+      }
+    };
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight - 8) setFlipUp(true);
-    }
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   if (dates.length === 0) return null;
 
-  return (
+  return createPortal(
     <div ref={ref} style={{
-      position: 'absolute',
-      ...(flipUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }),
-      left: 0,
+      position: 'fixed', top: pos.top, left: pos.left, opacity: pos.opacity,
       background: T.paper, border: `1px solid ${T.borderStrong}`, borderRadius: 4,
-      boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 30,
-      minWidth: 200, padding: 4,
+      boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 50,
+      minWidth: 200, padding: 4, maxHeight: '60vh', overflowY: 'auto',
+      transition: 'opacity 80ms',
     }}>
       <div style={{ fontFamily: FONT_MONO, fontSize: '9px', letterSpacing: '0.2em', textTransform: 'uppercase', color: T.muted, padding: '6px 10px 4px' }}>
         Add a date
@@ -334,6 +376,7 @@ function AddDayPopover({ dates, onPick, onClose }) {
           </button>
         );
       })}
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -191,10 +191,12 @@ describe('getAddableDatesAfter', () => {
     expect(result).toEqual(['2026-01-06', '2026-01-07', '2026-01-08']);
   });
 
-  it('stops at semester end', () => {
+  it('does not stop at semester end (caller decides whether to extend)', () => {
     const allDaysSet = new Set(['2026-01-05']);
     const result = getAddableDatesAfter('2026-01-05', allDaysSet, '2026-01-07');
-    expect(result).toEqual(['2026-01-06', '2026-01-07']);
+    // Returns 21 days even though semester end was 2026-01-07.
+    expect(result.length).toBe(21);
+    expect(result[0]).toBe('2026-01-06');
   });
 
   it('returns at most 21 days', () => {

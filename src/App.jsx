@@ -484,11 +484,22 @@ export default function ClassPlannerApp() {
   // ── Day management ─────────────────────────────────────────────
 
   const addExtraDay = (date) => {
+    let extendedTo = null;
     updateState((s) => {
       if (!s.extraDays.includes(date)) s.extraDays.push(date);
+      // If the new day lands past the declared semester end, push the end
+      // date forward so the date row sits inside a valid semester window
+      // and downstream logic (template export, date_shift_options, the
+      // shift-all-dates modal) keeps working.
+      if (s.setup.endDate && date > s.setup.endDate) {
+        s.setup.endDate = date;
+        extendedTo = date;
+      }
       return s;
     });
-    showToast(`Added ${fmtMonthDay(date)} to schedule`);
+    showToast(extendedTo
+      ? `Added ${fmtMonthDay(date)} — semester end extended to match`
+      : `Added ${fmtMonthDay(date)} to schedule`);
   };
 
   const removeExtraDay = (date) => {

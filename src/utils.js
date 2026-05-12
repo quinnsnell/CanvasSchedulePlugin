@@ -50,15 +50,17 @@ export function computeAllDays(setup, extraDays) {
 }
 
 /** Dates available to add after a given day (up to 21 days or next existing day). */
-export function getAddableDatesAfter(date, allDaysSet, semesterEnd) {
+export function getAddableDatesAfter(date, allDaysSet, _semesterEnd) {
+  // Always returns up to 21 calendar days following `date`, stopping at the
+  // first date that's already in `allDaysSet`. The semester end is no
+  // longer a hard cap — picking a date past the end signals the caller to
+  // extend the semester (see App.addExtraDay).
   const out = [];
   const cur = new Date(date + 'T00:00:00');
   cur.setDate(cur.getDate() + 1);
-  const end = semesterEnd ? new Date(semesterEnd + 'T00:00:00') : null;
   let safety = 0;
   while (safety++ < 21) {
     const iso = cur.toISOString().slice(0, 10);
-    if (end && cur > end) break;
     if (allDaysSet.has(iso)) break;
     out.push(iso);
     cur.setDate(cur.getDate() + 1);
