@@ -11,6 +11,8 @@ export function appStyles() {
   return `
     @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
     .planner-card a { color: ${T.inkBlue}; text-decoration: underline; text-underline-offset: 2px; }
+    .planner-card a.planner-title-link { color: inherit; text-decoration: none; }
+    .planner-card a.planner-title-link:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
     .planner-rich p { margin: 0 0 0.4rem 0; }
     .planner-rich p:last-child { margin-bottom: 0; }
     .planner-rich ul, .planner-rich ol { margin: 0.2rem 0 0.4rem 1.2rem; }

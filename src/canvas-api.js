@@ -186,6 +186,39 @@ export const CanvasAPI = {
       body: JSON.stringify({ assignment: { name } }),
     }),
 
+  /** Delete an assignment in Canvas (also removes the backing quiz, if any). */
+  deleteAssignment: (b, t, c, a) =>
+    canvasFetch(b, t, `/courses/${c}/assignments/${a}`, { method: 'DELETE' }),
+
+  /** Delete a Classic Quiz by ID. */
+  deleteQuiz: (b, t, c, q) =>
+    canvasFetch(b, t, `/courses/${c}/quizzes/${q}`, { method: 'DELETE' }),
+
+  /** Delete a wiki page by URL slug. */
+  deletePage: (b, t, c, urlSlug) =>
+    canvasFetch(b, t, `/courses/${c}/pages/${encodeURIComponent(urlSlug)}`, { method: 'DELETE' }),
+
+  /** Delete a module by ID. */
+  deleteModule: (b, t, c, m) =>
+    canvasFetch(b, t, `/courses/${c}/modules/${m}`, { method: 'DELETE' }),
+
+  /** Delete a discussion topic (includes announcements). */
+  deleteDiscussionTopic: (b, t, c, d) =>
+    canvasFetch(b, t, `/courses/${c}/discussion_topics/${d}`, { method: 'DELETE' }),
+
+  /** Delete a file by ID (not scoped to course — Canvas's files API is global). */
+  deleteFile: (b, t, fileId) =>
+    canvasFetch(b, t, `/files/${fileId}`, { method: 'DELETE' }),
+
+  /**
+   * Reset a course to a blank state: Canvas archives all current content and
+   * creates a fresh course with the same ID. Use ONLY for destructive
+   * "overwrite everything" flows. Requires the user's token to have the
+   * Course Reset permission. Returns the new course record.
+   */
+  resetCourseContent: (b, t, c) =>
+    canvasFetch(b, t, `/courses/${c}/reset_content`, { method: 'POST' }),
+
   /**
    * Upload schedule JSON to Canvas course files.
    * Uses Canvas's 3-step file upload flow: request URL, POST file, confirm.
@@ -240,7 +273,12 @@ export const CanvasAPI = {
   async downloadSchedule(baseUrl, token, courseId) {
     const files = await canvasFetch(baseUrl, token,
       `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
-    const file = files.find((f) => f.display_name === SCHEDULE_FILENAME || f.filename === SCHEDULE_FILENAME);
+    const target = SCHEDULE_FILENAME.toLowerCase();
+    const file = files.find((f) => {
+      const dn = (f.display_name || '').toLowerCase();
+      const fn = (f.filename || '').toLowerCase();
+      return dn === target || fn === target;
+    });
     if (!file) return null;
 
     const base = baseUrl.replace(/\/+$/, '');

@@ -34,10 +34,13 @@ function CloneWarnings({ warnings }) {
       return `${group.length} assignment${group.length === 1 ? '' : 's'} could not be re-linked (title not found in target course)`;
     }
     if (kind === 'unmatched-link') {
-      const totals = group
-        .map((w) => `${w.count} ${w.type.replace(/_/g, ' ')}`)
+      // Each entry is one occurrence — aggregate by type for the summary.
+      const byType = {};
+      group.forEach((w) => { byType[w.type] = (byType[w.type] || 0) + 1; });
+      const totals = Object.entries(byType)
+        .map(([type, n]) => `${n} ${type.replace(/_/g, ' ')}`)
         .join(', ');
-      return `Broken embedded link${group.length === 1 && group[0].count === 1 ? '' : 's'} in notes: ${totals}`;
+      return `Broken embedded link${group.length === 1 ? '' : 's'} in notes: ${totals}`;
     }
     if (kind === 'title-collision') {
       return `${group.length} title collision${group.length === 1 ? '' : 's'} in source course — relink may have picked the wrong assignment`;
@@ -56,7 +59,12 @@ function CloneWarnings({ warnings }) {
       return group.map((w) => w.title).join(', ');
     }
     if (kind === 'unmatched-link') {
-      return group.map((w) => `${w.type} (×${w.count})`).join(', ');
+      // Render one line per occurrence: "files: 'syllabus.pdf' (id 12345) — in note: 'Read chapter…'"
+      return group.map((w) => {
+        const label = w.sourceName ? `"${w.sourceName}"` : `${w.type.slice(0, -1)}#${w.sourceId}`;
+        const ctx = w.noteSnippet ? ` — in note: "${w.noteSnippet}…"` : '';
+        return `${w.type}: ${label} (id ${w.sourceId})${ctx}`;
+      }).join('\n');
     }
     if (kind === 'title-collision') {
       return group.map((w) => `"${w.title}" (×${w.count})`).join(', ');
@@ -100,6 +108,7 @@ function CloneWarnings({ warnings }) {
               marginTop: 6, padding: 6, fontFamily: FONT_MONO, fontSize: '11px',
               background: T.paper, color: T.ink, borderRadius: 2,
               maxHeight: 200, overflow: 'auto',
+              whiteSpace: 'pre-line',
             }}>
               {Object.entries(byKind).map(([kind, group]) => (
                 <div key={kind} style={{ marginBottom: 4 }}>
@@ -131,8 +140,9 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
 
   // Clone-course state
   const [cloneSource, setCloneSource] = useState('');
+  const [cloneOverwrite, setCloneOverwrite] = useState(false);
   const [cloneStatus, setCloneStatus] = useState(null);
-  // { running, state: 'queued'|'running'|'completed'|'failed'|'stopped', completion, elapsedSec, error? }
+  // { running, state: 'queued'|'running'|'completed'|'failed'|'stopped'|'resetting', completion, elapsedSec, error? }
   const cloneStopRef = useRef(false);
 
   const toggleDay = (c) =>
@@ -178,17 +188,24 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
     if (!cloneSource || !onCloneCourse) return;
     const targetName = state.canvas.courses.find((c) => String(c.id) === String(state.canvas.courseId))?.name || 'this course';
     const sourceName = state.canvas.courses.find((c) => String(c.id) === String(cloneSource))?.name || 'the source course';
-    if (!window.confirm(
-      `Copy all content (assignments, quizzes, files, modules, pages) from\n\n` +
-      `  ${sourceName}\n\ninto\n\n  ${targetName}?\n\n` +
-      `Canvas runs the copy server-side. Existing content in the target is preserved (additive).`
-    )) return;
+    const confirmMsg = cloneOverwrite
+      ? `⚠️ DESTRUCTIVE OVERWRITE\n\n` +
+        `Step 1: DELETE all existing content from:\n  ${targetName}\n\n` +
+        `Step 2: Copy content from:\n  ${sourceName}\n\n` +
+        `Step 1 is irreversible. Canvas's Course Reset wipes assignments, quizzes, files, ` +
+        `pages, modules, discussions, and announcements. The course shell stays (id, name, dates).\n\n` +
+        `Type-and-confirm not implemented — click OK only if you are sure.`
+      : `Copy all content (assignments, quizzes, files, modules, pages) from\n\n` +
+        `  ${sourceName}\n\ninto\n\n  ${targetName}?\n\n` +
+        `Canvas runs the copy server-side. Existing content in the target is preserved (additive).`;
+    if (!window.confirm(confirmMsg)) return;
     cloneStopRef.current = false;
     setCloneStatus({ running: true, state: 'queued', completion: 0, elapsedSec: 0 });
     const result = await onCloneCourse(
       cloneSource,
       (p) => setCloneStatus({ running: true, ...p }),
       () => cloneStopRef.current,
+      cloneOverwrite,
     );
     if (result.ok) {
       setCloneStatus({
@@ -383,12 +400,38 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
                   {cloneStatus?.running
                     ? <RefreshCw size={14} className="animate-spin" />
                     : <Copy size={14} />}
-                  {cloneStatus?.running ? 'Copying…' : 'Copy content'}
+                  {cloneStatus?.running ? 'Copying…' : (cloneOverwrite ? 'Wipe + copy content' : 'Copy content')}
                 </ActionButton>
                 {cloneStatus?.running && (
                   <ActionButton onClick={stopClonePolling}>Stop checking</ActionButton>
                 )}
               </div>
+              <label
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  marginTop: 10, cursor: cloneStatus?.running ? 'default' : 'pointer',
+                  opacity: cloneStatus?.running ? 0.5 : 1,
+                  padding: 8, borderRadius: 3,
+                  background: cloneOverwrite ? T.errorBg : 'transparent',
+                  border: `1px solid ${cloneOverwrite ? T.errorBorder : T.border}`,
+                }}>
+                <input
+                  type="checkbox"
+                  checked={cloneOverwrite}
+                  disabled={cloneStatus?.running}
+                  onChange={(e) => setCloneOverwrite(e.target.checked)}
+                  style={{ accentColor: T.ox, width: 14, height: 14, marginTop: 2 }}
+                />
+                <span style={{ fontSize: '12px', color: T.ink, lineHeight: 1.5 }}>
+                  <strong>Overwrite all existing content in target first</strong>
+                  <span style={{ display: 'block', color: T.muted, marginTop: 2 }}>
+                    Calls Canvas's Course Reset, then copies. Wipes every assignment, quiz, file,
+                    page, module, and discussion in <strong>{targetName}</strong>. Course settings
+                    (name, dates, enrollments) are preserved. Requires Course Reset permission on
+                    your Canvas token. Irreversible.
+                  </span>
+                </span>
+              </label>
               {cloneStatus && (
                 <div style={{
                   marginTop: 12, padding: 10, borderRadius: 3, fontSize: '12px',
@@ -408,13 +451,62 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
                       Copy failed: {cloneStatus.error}</span>
                   )}
                   {cloneStatus.state === 'completed' && (() => {
-                    const sch = cloneStatus.schedule;
-                    if (!sch || !sch.hadSource) {
+                    const sch = cloneStatus.schedule || {};
+                    const canvasLine = sch.canvasAdded
+                      ? `Loaded ${sch.canvasAdded} assignment${sch.canvasAdded === 1 ? '' : 's'}/quiz${sch.canvasAdded === 1 ? '' : 'zes'} from Canvas into the schedule.`
+                      : null;
+                    const canvasErrorLine = sch.canvasLoadError
+                      ? `Couldn't pull Canvas assignments: ${sch.canvasLoadError}. Click Refresh above to retry.`
+                      : null;
+
+                    if (!sch.hadSource) {
+                      const diag = sch.sourceDiag;
+                      const foundSource = diag && (
+                        /found/i.test(diag.localStorage || '') ||
+                        /found/i.test(diag.sourceCanvasFiles || '') ||
+                        /found/i.test(diag.targetCanvasFiles || '')
+                      );
                       return (
                         <span>
                           <Check size={12} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
-                          Canvas content copied. No saved planner schedule was found for the source course —
-                          click Refresh above to load the new assignments unscheduled.
+                          Canvas content copied. {canvasLine || 'No assignments returned from Canvas yet — try Refresh.'}
+                          {canvasErrorLine && <span style={{ display: 'block', marginTop: 4, color: T.ox }}>{canvasErrorLine}</span>}
+                          {sch.error ? (
+                            <span style={{ display: 'block', marginTop: 6, color: T.ox, fontSize: '12px', lineHeight: 1.5 }}>
+                              <strong>Import error:</strong> <code style={{ fontFamily: FONT_MONO }}>{sch.error}</code>
+                              <span style={{ display: 'block', marginTop: 4, color: T.muted }}>
+                                Source planner state was found, but importing it onto the new semester failed. The Canvas-side
+                                copy still completed (assignments/quizzes/files/etc. are present).
+                              </span>
+                            </span>
+                          ) : foundSource ? (
+                            <span style={{ display: 'block', marginTop: 6, color: T.ox, fontSize: '12px', lineHeight: 1.5 }}>
+                              Source planner state was found, but the import didn't run. Diagnostic below.
+                            </span>
+                          ) : (
+                            <span style={{ display: 'block', marginTop: 6, color: T.muted, fontSize: '11px', lineHeight: 1.5 }}>
+                              <strong>Notes &amp; modules didn't come over.</strong> A saved planner schedule for the source course
+                              wasn't found in any of the locations we check. Only the Canvas-side content (assignments, quizzes, files,
+                              pages, modules, discussions) was duplicated by Canvas's course-copy.<br />
+                              <strong>To enable notes-carryover for future clones:</strong> switch to the source course in this planner,
+                              then click <strong>Publish</strong> at the top — that uploads <code style={{ fontFamily: FONT_MONO }}>schedule-planner.json</code>
+                              to the source's Canvas Files, where this tool can fetch it from any device. Then re-run the copy.
+                            </span>
+                          )}
+                          {diag && (
+                            <div style={{
+                              marginTop: 8, padding: '8px 10px', borderRadius: 3,
+                              background: T.subtle, border: `1px solid ${T.border}`,
+                              fontFamily: FONT_MONO, fontSize: '10px', color: T.ink, lineHeight: 1.6,
+                            }}>
+                              <div style={{ fontWeight: 600, marginBottom: 4, color: T.muted, letterSpacing: '0.04em' }}>
+                                WHAT WE CHECKED
+                              </div>
+                              <div>· This browser's localStorage: <span style={{ color: T.inkBlue }}>{diag.localStorage}</span></div>
+                              <div>· Source course's Canvas Files: <span style={{ color: T.inkBlue }}>{diag.sourceCanvasFiles}</span></div>
+                              <div>· Target's Canvas Files (post-migration): <span style={{ color: T.inkBlue }}>{diag.targetCanvasFiles}</span></div>
+                            </div>
+                          )}
                         </span>
                       );
                     }
@@ -436,6 +528,8 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
                         {' '}({sch.relinked} assignment{sch.relinked === 1 ? '' : 's'} re-linked to the new course).
                         {rewriteSuffix && <span> {rewriteSuffix}</span>}
                         {datesSuffix && <span> {datesSuffix}</span>}
+                        {canvasLine && <span style={{ display: 'block', marginTop: 4 }}>{canvasLine}</span>}
+                        {canvasErrorLine && <span style={{ display: 'block', marginTop: 4, color: T.ox }}>{canvasErrorLine}</span>}
                         {truncated && (
                           <span style={{ display: 'block', marginTop: 4, color: T.ox }}>
                             Source semester had {sch.sourceTotalDays} teaching days but this one only has {sch.mappedDays} —
@@ -461,11 +555,17 @@ export function SetupPanel({ state, updateState, onImport, onExportTemplate, onI
                   )}
                   {cloneStatus.running && cloneStatus.state !== 'failed' && cloneStatus.state !== 'completed' && (
                     <span style={{ fontFamily: FONT_MONO }}>
-                      {cloneStatus.state === 'pushing-dates'
+                      {cloneStatus.state === 'resetting'
+                        ? 'Resetting target course content via Canvas (this can take a few seconds)…'
+                        : cloneStatus.state === 'deleting'
+                          ? `Deleting Canvas content: ${cloneStatus.done || 0}/${cloneStatus.total || 0} (per-item DELETEs — Course Reset wasn't allowed)`
+                        : cloneStatus.state === 'pushing-dates'
                         ? `Pushing due dates to Canvas: ${cloneStatus.done || 0}/${cloneStatus.total || 0} (throttled to avoid rate limits)`
                         : cloneStatus.state === 'syncing'
                           ? 'Canvas copy done — building remap and merging planner schedule…'
-                          : `Still running — ${cloneStatus.state || 'starting'}, ${Math.round(cloneStatus.completion || 0)}%`}
+                          : cloneStatus.state === 'loading-canvas'
+                            ? 'Loading assignments + groups from the new course…'
+                            : `Still running — ${cloneStatus.state || 'starting'}, ${Math.round(cloneStatus.completion || 0)}%`}
                       {' · '}elapsed {fmtElapsed(cloneStatus.elapsedSec || 0)}
                     </span>
                   )}

@@ -345,8 +345,17 @@ export function exportTemplate(state) {
   const teachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
   const teachingSet = new Set(teachingDays);
 
+  // Defensive: older saved states might be missing fields added later.
+  // Normalize so accessors don't blow up reading from undefined.
+  const items = state.items || {};
+  const schedule = state.schedule || {};
+  const holidays = state.holidays || {};
+  const modules = state.modules || {};
+  const extraDaysArr = state.extraDays || [];
+  const unscheduledArr = state.unscheduled || [];
+
   const stripItem = (id) => {
-    const item = state.items[id];
+    const item = items[id];
     if (!item) return null;
     // Strip Canvas-specific IDs — they belong to the old course
     const { canvasId, htmlUrl, dueDate, id: _id, ...rest } = item;
@@ -356,15 +365,15 @@ export function exportTemplate(state) {
   // Convert schedule: date → [itemIds]  →  teachingDayIndex → [items]
   const slots = [];
   teachingDays.forEach((date, idx) => {
-    const ids = state.schedule[date] || [];
-    if (ids.length === 0 && !state.holidays[date] && !state.modules[date]) return;
-    const items = ids.map(stripItem).filter(Boolean);
+    const ids = schedule[date] || [];
+    if (ids.length === 0 && !holidays[date] && !modules[date]) return;
+    const slotItems = ids.map(stripItem).filter(Boolean);
     slots.push({
       index: idx,
       dayCode: DAY_CODES[new Date(date + 'T12:00:00').getDay()],
-      items,
-      holiday: state.holidays[date] || null,
-      module: state.modules[date] || null,
+      items: slotItems,
+      holiday: holidays[date] || null,
+      module: modules[date] || null,
     });
   });
 
@@ -377,22 +386,22 @@ export function exportTemplate(state) {
     return Math.round(ms / 86400000);
   };
   const extraSlots = [];
-  (state.extraDays || []).forEach((date) => {
+  extraDaysArr.forEach((date) => {
     if (teachingSet.has(date)) return; // already in slots
-    const ids = state.schedule[date] || [];
-    if (ids.length === 0 && !state.holidays[date] && !state.modules[date]) return;
-    const items = ids.map(stripItem).filter(Boolean);
+    const ids = schedule[date] || [];
+    if (ids.length === 0 && !holidays[date] && !modules[date]) return;
+    const slotItems = ids.map(stripItem).filter(Boolean);
     extraSlots.push({
       daysFromStart: dayOffset(date),
       dayCode: DAY_CODES[new Date(date + 'T12:00:00').getDay()],
-      items,
-      holiday: state.holidays[date] || null,
-      module: state.modules[date] || null,
+      items: slotItems,
+      holiday: holidays[date] || null,
+      module: modules[date] || null,
     });
   });
 
   // Unscheduled items (readings, notes not on any day)
-  const unscheduledItems = (state.unscheduled || []).map(stripItem).filter(Boolean);
+  const unscheduledItems = unscheduledArr.map(stripItem).filter(Boolean);
 
   return {
     version: 1,

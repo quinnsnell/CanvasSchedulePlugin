@@ -10,7 +10,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  GripVertical, Pencil, Trash2, Copy, ExternalLink,
+  GripVertical, Pencil, Trash2, Copy,
   Bold, Italic, Link as LinkIcon, FileText, BookOpen, X,
   ChevronUp, ChevronDown, Image,
 } from 'lucide-react';
@@ -55,8 +55,9 @@ export default function ItemCard({
     disabled: !canDrag,
   });
 
-  const accent = isAssign ? T.inkBlue : T.sienna;
-  const accentSoft = isAssign ? T.inkBlueSoft : T.siennaSoft;
+  const isQuiz = isAssign && item.isQuiz;
+  const accent = isQuiz ? T.amber : isAssign ? T.inkBlue : T.sienna;
+  const accentSoft = isQuiz ? T.amberSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
   const isDragging = isSortableDragging || draggingId === item.id;
 
   const style = {
@@ -153,7 +154,9 @@ export default function ItemCard({
 export function DragOverlayCard({ item }) {
   if (!item) return null;
   const isAssign = item.type === 'assign';
-  const accent = isAssign ? T.inkBlue : T.sienna;
+  const isQuiz = isAssign && item.isQuiz;
+  const accent = isQuiz ? T.amber : isAssign ? T.inkBlue : T.sienna;
+  const accentSoft = isQuiz ? T.amberSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
 
   return (
     <div
@@ -179,7 +182,7 @@ export function DragOverlayCard({ item }) {
         {isAssign ? (
           <>
             <div style={{ marginBottom: 4 }}>
-              <span style={pillStyle(T.inkBlue, T.inkBlueSoft)}>Assignment</span>
+              <span style={pillStyle(accent, accentSoft)}>{isQuiz ? 'Quiz' : 'Assignment'}</span>
             </div>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: '15px', fontWeight: 500, color: T.ink, lineHeight: 1.3 }}>
               {item.title || 'Untitled'}
@@ -201,11 +204,17 @@ export function DragOverlayCard({ item }) {
 
 function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onUpdate, accent, accentSoft, assignmentGroups }) {
   const group = item.groupId && assignmentGroups ? assignmentGroups[item.groupId] : null;
+  // Hide the group badge when the course has only one assignment group —
+  // that's Canvas's default "Assignments" bucket and the badge would just
+  // repeat the type pill. Only worth showing when the course actually
+  // subdivides assignments (Homework / Exams / Projects / etc.).
+  const groupCount = Object.keys(assignmentGroups || {}).length;
+  const showGroup = group && groupCount > 1;
   return (
     <>
       <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 4 }}>
-        <span style={pillStyle(accent, accentSoft)}>Assignment</span>
-        {group && (
+        <span style={pillStyle(accent, accentSoft)}>{item.isQuiz ? 'Quiz' : 'Assignment'}</span>
+        {showGroup && (
           <span style={{
             fontFamily: FONT_MONO, fontSize: '9px', fontWeight: 500,
             padding: '1px 6px', borderRadius: 8,
@@ -225,12 +234,6 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
             demo
           </span>
         ) : null}
-        {item.htmlUrl && (
-          <a href={item.htmlUrl} target="_blank" rel="noreferrer" style={{ color: T.muted }}
-            aria-label={`Open ${item.title || 'assignment'} in Canvas`}>
-            <ExternalLink size={11} />
-          </a>
-        )}
       </div>
 
       {titleEditing && !isStudent ? (
@@ -244,13 +247,24 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
             background: T.cream, color: T.ink,
           }}
         />
-      ) : (
-        <div
-          onDoubleClick={() => !isStudent && setTitleEditing(true)}
-          style={{ fontFamily: FONT_DISPLAY, fontSize: '15px', fontWeight: 500, color: T.ink, lineHeight: 1.3, wordBreak: 'break-word' }}
-          title={!isStudent ? 'Double-click to rename' : undefined}
+      ) : item.htmlUrl ? (
+        <a
+          href={item.htmlUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="planner-title-link"
+          style={{
+            fontFamily: FONT_DISPLAY, fontSize: '15px', fontWeight: 500, color: T.ink,
+            lineHeight: 1.3, wordBreak: 'break-word',
+            textDecoration: 'none', display: 'inline-block',
+          }}
+          aria-label={`Open ${item.title || (item.isQuiz ? 'quiz' : 'assignment')} in Canvas`}
         >
-          {item.title}
+          {item.title || 'Untitled'}
+        </a>
+      ) : (
+        <div style={{ fontFamily: FONT_DISPLAY, fontSize: '15px', fontWeight: 500, color: T.ink, lineHeight: 1.3, wordBreak: 'break-word' }}>
+          {item.title || 'Untitled'}
         </div>
       )}
 

@@ -9,7 +9,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
-  FileText, BookOpen, ExternalLink, CalendarPlus, MinusCircle,
+  FileText, BookOpen, FileQuestion, ExternalLink, CalendarPlus, MinusCircle,
   Hourglass, Ban, ListPlus, Repeat,
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
@@ -21,7 +21,7 @@ export default function ClassDayRow({
   date, index, isExtra, items, isStudent, canvas, canvasReady, pendingCount,
   weekIdx, isWeekStart, holidayLabel,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate,
-  onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
+  onAddNote, onAddAssignment, onAddQuiz, onAddExtraDay, onRemoveExtraDay,
   onToggleHoliday, onAddModule, onReorder,
   onShowRecurringModal,
   addableDates, draggingId,
@@ -115,7 +115,7 @@ export default function ClassDayRow({
         draggingId={draggingId}
         onMoveItem={onMoveItem} onUpdateItem={onUpdateItem} onDeleteItem={onDeleteItem}
         onDuplicate={onDuplicate} onReorder={onReorder}
-        onAddNote={onAddNote} onAddAssignment={onAddAssignment}
+        onAddNote={onAddNote} onAddAssignment={onAddAssignment} onAddQuiz={onAddQuiz}
         onShowRecurringModal={onShowRecurringModal}
         autoEditId={autoEditId} clearAutoEdit={clearAutoEdit}
         assignmentGroups={assignmentGroups}
@@ -145,7 +145,7 @@ function ContentColumn({
   items, date, isStudent, canvas, canvasReady, holidayLabel,
   draggingId,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
-  onAddNote, onAddAssignment, onShowRecurringModal,
+  onAddNote, onAddAssignment, onAddQuiz, onShowRecurringModal,
   autoEditId, clearAutoEdit,
   assignmentGroups,
 }) {
@@ -215,6 +215,13 @@ function ContentColumn({
           >
             <BookOpen size={11} /> Assignment <ExternalLink size={9} />
           </DayToolBtn>
+          <DayToolBtn
+            onClick={onAddQuiz}
+            title={canvasReady ? 'Create a New Quiz (Quiz LTI) for this day and open it in Canvas to add questions' : 'Connect Canvas to add quizzes'}
+            disabled={!canvasReady}
+          >
+            <FileQuestion size={11} /> New Quiz <ExternalLink size={9} />
+          </DayToolBtn>
         </div>
       )}
     </div>
@@ -225,12 +232,18 @@ function ContentColumn({
 
 function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
   const ref = useRef(null);
+  const [flipUp, setFlipUp] = useState(false);
 
   useEffect(() => {
     const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
+    // Flip above the trigger if rendering below would overflow the viewport.
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 8) setFlipUp(true);
+    }
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
@@ -246,7 +259,9 @@ function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
 
   return (
     <div ref={ref} style={{
-      position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+      position: 'absolute',
+      ...(flipUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }),
+      left: 0,
       background: T.paper, border: `1px solid ${T.borderStrong}`, borderRadius: 4,
       boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 30,
       minWidth: 180, padding: 4,
@@ -269,12 +284,17 @@ function NoteMenuPopover({ onAddNote, onAddRecurring, onClose }) {
 
 function AddDayPopover({ dates, onPick, onClose }) {
   const ref = useRef(null);
+  const [flipUp, setFlipUp] = useState(false);
 
   useEffect(() => {
     const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 8) setFlipUp(true);
+    }
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
@@ -285,7 +305,9 @@ function AddDayPopover({ dates, onPick, onClose }) {
 
   return (
     <div ref={ref} style={{
-      position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+      position: 'absolute',
+      ...(flipUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }),
+      left: 0,
       background: T.paper, border: `1px solid ${T.borderStrong}`, borderRadius: 4,
       boxShadow: '0 6px 20px rgba(26,20,16,0.12)', zIndex: 30,
       minWidth: 200, padding: 4,

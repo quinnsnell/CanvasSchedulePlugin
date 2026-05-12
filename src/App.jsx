@@ -81,7 +81,6 @@ export default function ClassPlannerApp() {
   const [conflictData, setConflictData] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterGroup, setFilterGroup] = useState(null);
   const [darkMode, setDarkMode] = useState(() => {
     try {
       const v = localStorage.getItem('planner-dark-mode');
@@ -208,32 +207,19 @@ export default function ClassPlannerApp() {
   // ── Search filter ──────────────────────────────────────────────
   const filteredDays = useMemo(() => {
     const hasSearch = searchQuery.trim().length > 0;
-    const hasGroupFilter = filterGroup !== null;
-    if (!hasSearch && !hasGroupFilter) return allDays;
-    const q = hasSearch ? searchQuery.trim().toLowerCase() : '';
+    if (!hasSearch) return allDays;
+    const q = searchQuery.trim().toLowerCase();
     return allDays.filter((d) => {
       const ids = state.schedule[d] || [];
-      if (hasGroupFilter && !hasSearch) {
-        return ids.some((id) => {
-          const item = state.items[id];
-          if (!item) return false;
-          if (item.type !== 'assign') return true;
-          return item.groupId === filterGroup;
-        });
-      }
       return ids.some((id) => {
         const item = state.items[id];
         if (!item) return false;
-        if (hasGroupFilter && item.type === 'assign' && item.groupId !== filterGroup) return false;
-        if (hasSearch) {
-          if (item.title && item.title.toLowerCase().includes(q)) return true;
-          if (item.html && item.html.replace(/<[^>]*>/g, '').toLowerCase().includes(q)) return true;
-          return false;
-        }
-        return true;
+        if (item.title && item.title.toLowerCase().includes(q)) return true;
+        if (item.html && item.html.replace(/<[^>]*>/g, '').toLowerCase().includes(q)) return true;
+        return false;
       });
     });
-  }, [allDays, searchQuery, filterGroup, state]);
+  }, [allDays, searchQuery, state]);
 
   // ── Keyboard: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z redo ──────────
   const undoRef = useRef(null);
@@ -461,6 +447,37 @@ export default function ClassPlannerApp() {
       showToast('Pop-up blocked — allow pop-ups for Canvas', 'err');
     } else {
       showToast('Opening Canvas… come back when you save the assignment');
+    }
+  };
+
+  /**
+   * New Quiz (Quiz LTI) creation. Canvas exposes a magic URL parameter
+   * `?quiz_lti` on the assignments/new form that flips it into Quiz LTI
+   * mode — the same path Canvas's own "+ Quiz → New" button uses
+   * internally. Reuses the pendingCreations reconciliation flow from
+   * startAssignmentCreation: when the user saves, the resulting assignment
+   * record appears in the next refresh and gets adopted onto the clicked
+   * date.
+   */
+  const startQuizCreation = (date) => {
+    const { connected, baseUrl, courseId } = state.canvas;
+    if (!connected || !courseId) {
+      showToast('Connect Canvas and pick a course first', 'err');
+      setShowSetup(true);
+      return;
+    }
+    const dueAt = encodeURIComponent(`${date}T23:59:00`);
+    const url = `${baseUrl.replace(/\/+$/, '')}/courses/${courseId}/assignments/new?quiz_lti&due_at=${dueAt}`;
+    const win = window.open(url, '_blank', 'noopener');
+    updateState((s) => {
+      s.pendingCreations = s.pendingCreations || [];
+      s.pendingCreations.push({ id: uid(), date, time: Date.now() });
+      return s;
+    });
+    if (!win) {
+      showToast('Pop-up blocked — allow pop-ups for Canvas', 'err');
+    } else {
+      showToast('Opening Canvas… come back when you save the quiz');
     }
   };
 
@@ -726,7 +743,32 @@ export default function ClassPlannerApp() {
 
   // ── Item edits ─────────────────────────────────────────────────
 
-  const deleteItem = (id) => {
+  const deleteItem = async (id) => {
+    const item = state.items[id];
+    const canvasId = item?.canvasId;
+    const { connected, baseUrl, token, courseId } = state.canvas;
+
+    // For Canvas-linked items, confirm and delete on the Canvas side too.
+    // Otherwise dragging stays out of sync — the next refresh re-imports the
+    // assignment from Canvas and the user wonders why their delete "didn't work".
+    if (canvasId && connected && courseId) {
+      const title = item.title || 'this item';
+      const ok = window.confirm(
+        `Delete "${title}" from Canvas too?\n\n` +
+        `OK  = also delete in Canvas (irreversible)\n` +
+        `Cancel = remove from schedule only (it will reappear on next refresh)`
+      );
+      if (ok) {
+        try {
+          await CanvasAPI.deleteAssignment(baseUrl, token, courseId, canvasId);
+          showToast('Deleted from Canvas');
+        } catch (e) {
+          showToast(`Canvas delete failed: ${e.message}`, 'err');
+          return; // keep the planner item so the user can retry
+        }
+      }
+    }
+
     updateState((s) => {
       delete s.items[id];
       s.unscheduled = s.unscheduled.filter((x) => x !== id);
@@ -922,6 +964,15 @@ export default function ClassPlannerApp() {
     }
   };
 
+  /**
+   * Detect whether a Canvas assignment record is actually a quiz. Canvas
+   * stores both New Quizzes (Quiz LTI) and Classic Quizzes as assignments:
+   *   - New Quiz: `is_quiz_lti_assignment: true`
+   *   - Classic Quiz: `quiz_id: <number>` set
+   */
+  const assignmentIsQuiz = (a) =>
+    Boolean(a?.is_quiz_lti_assignment || a?.quiz_id);
+
   /** Light sync — merge new Canvas assignments (triggered by window focus). */
   const syncFromCanvas = async () => {
     const s0 = stateRef.current;
@@ -944,6 +995,7 @@ export default function ClassPlannerApp() {
           existing.title = a.name;
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
+          existing.isQuiz = assignmentIsQuiz(a);
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           return;
         }
@@ -963,7 +1015,7 @@ export default function ClassPlannerApp() {
           const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
           if (match) claimedPending.add(match.id);
         }
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
           s.schedule[due] = s.schedule[due] || [];
@@ -1039,6 +1091,7 @@ export default function ClassPlannerApp() {
           existing.title = a.name;
           existing.points = a.points_possible || 0;
           existing.htmlUrl = a.html_url;
+          existing.isQuiz = assignmentIsQuiz(a);
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           const newDue = a.due_at ? localDateStr(a.due_at) : null;
           if (newDue && newDue !== existing.dueDate) {
@@ -1056,7 +1109,7 @@ export default function ClassPlannerApp() {
         }
         const id = uid();
         const due = a.due_at ? localDateStr(a.due_at) : null;
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) { s.extraDays.push(due); autoAdded++; }
           s.schedule[due] = s.schedule[due] || [];
@@ -1080,19 +1133,131 @@ export default function ClassPlannerApp() {
   };
 
   /**
+   * Fallback for courses where the user's token lacks Canvas Course Reset
+   * permission. Enumerates content per type and deletes each item via the
+   * standard edit endpoints (which most instructor tokens DO have). Slower
+   * than `reset_content` (hundreds of round trips on a populated course),
+   * but works for everyone with normal content-edit permissions.
+   *
+   * Throttled: 5 parallel deletes, 1.5s sleep between batches — matches the
+   * date-push throttle to stay well under Canvas's per-token rate limit.
+   * 404 errors are treated as already-deleted (Canvas cascades, e.g., quiz
+   * deletes can race with assignment deletes that share a backing record).
+   *
+   * Returns `{ total, deleted, failures }`.
+   */
+  const manuallyWipeCourse = async (baseUrl, token, courseId, onProgress) => {
+    const failures = [];
+    // Delete order matters slightly: tear down modules before the assignments
+    // they reference; tear down pages before the files they embed; files last.
+    const types = [
+      {
+        key: 'modules',
+        list: () => CanvasAPI.listModules(baseUrl, token, courseId),
+        deleteOne: (m) => CanvasAPI.deleteModule(baseUrl, token, courseId, m.id),
+        label: (m) => m.name || `module#${m.id}`,
+      },
+      {
+        key: 'pages',
+        list: () => CanvasAPI.listAllPages(baseUrl, token, courseId),
+        deleteOne: (p) => CanvasAPI.deletePage(baseUrl, token, courseId, p.url),
+        label: (p) => p.title || p.url,
+      },
+      {
+        key: 'assignments',
+        list: () => CanvasAPI.listAssignments(baseUrl, token, courseId),
+        deleteOne: (a) => CanvasAPI.deleteAssignment(baseUrl, token, courseId, a.id),
+        label: (a) => a.name || `assignment#${a.id}`,
+      },
+      {
+        key: 'quizzes',
+        list: () => CanvasAPI.listQuizzes(baseUrl, token, courseId),
+        deleteOne: (q) => CanvasAPI.deleteQuiz(baseUrl, token, courseId, q.id),
+        label: (q) => q.title || `quiz#${q.id}`,
+      },
+      {
+        key: 'discussions',
+        list: () => CanvasAPI.listDiscussionTopics(baseUrl, token, courseId),
+        deleteOne: (d) => CanvasAPI.deleteDiscussionTopic(baseUrl, token, courseId, d.id),
+        label: (d) => d.title || `discussion#${d.id}`,
+      },
+      {
+        key: 'files',
+        list: () => CanvasAPI.listFiles(baseUrl, token, courseId),
+        deleteOne: (f) => CanvasAPI.deleteFile(baseUrl, token, f.id),
+        label: (f) => f.display_name || f.filename || `file#${f.id}`,
+      },
+    ];
+
+    // Enumerate every type up front so we can show a total to the user.
+    const lists = await Promise.all(types.map(async (t) => {
+      try { return { ...t, items: await t.list() }; }
+      catch (e) { return { ...t, items: [], listError: e.message }; }
+    }));
+    const total = lists.reduce((sum, l) => sum + l.items.length, 0);
+    onProgress?.({ done: 0, total });
+    if (total === 0) return { total: 0, deleted: 0, failures };
+
+    let done = 0;
+    const BATCH_SIZE = 5;
+    const SLEEP_MS = 1500;
+
+    for (const lt of lists) {
+      if (lt.listError) {
+        failures.push({ type: lt.key, name: '(list error)', error: lt.listError });
+        continue;
+      }
+      for (let i = 0; i < lt.items.length; i += BATCH_SIZE) {
+        const batch = lt.items.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (item) => {
+          try {
+            await lt.deleteOne(item);
+          } catch (e) {
+            // 404 = already deleted (Canvas cascades). Treat as success.
+            if (!/\b404\b/.test(e.message)) {
+              failures.push({ type: lt.key, name: lt.label(item), error: e.message });
+            }
+          }
+          done += 1;
+          onProgress?.({ done, total });
+        }));
+        if (i + BATCH_SIZE < lt.items.length) {
+          await new Promise((r) => setTimeout(r, SLEEP_MS));
+        }
+      }
+    }
+
+    return { total, deleted: done - failures.length, failures };
+  };
+
+  /**
    * Load a course's planner state from local storage if present, otherwise
    * try to download the schedule JSON the instructor previously published
    * to that course's Canvas Files. Returns null if neither is available.
    */
-  const loadSourcePlannerState = async (sourceCourseId, baseUrl, token) => {
+  const loadSourcePlannerState = async (sourceCourseId, baseUrl, token, diag) => {
     try {
       const local = await Store.load(sourceCourseId);
-      if (local && local.items && local.setup) return local;
-    } catch {}
+      if (diag) diag.localStorage = local && local.items
+        ? `found (${Object.keys(local.items).length} items)`
+        : 'not found';
+      if (local && local.items && local.setup) {
+        // eslint-disable-next-line no-console
+        console.log('[CanvasSchedulePlugin] Source planner state found in localStorage');
+        return local;
+      }
+    } catch (e) { if (diag) diag.localStorage = `error: ${e.message}`; }
     try {
       const remote = await CanvasAPI.downloadSchedule(baseUrl, token, sourceCourseId);
-      if (remote && remote.items && remote.setup) return remote;
-    } catch {}
+      if (diag) diag.sourceCanvasFiles = remote && remote.items
+        ? `found (${Object.keys(remote.items).length} items)`
+        : 'no schedule-planner.json found';
+      if (remote && remote.items && remote.setup) {
+        // eslint-disable-next-line no-console
+        console.log('[CanvasSchedulePlugin] Source planner state found in source\'s Canvas Files');
+        return remote;
+      }
+    } catch (e) { if (diag) diag.sourceCanvasFiles = `error: ${e.message}`; }
     return null;
   };
 
@@ -1123,6 +1288,10 @@ export default function ClassPlannerApp() {
     ];
     const remap = {};
     const ambiguousFiles = [];
+    // Source-side ID → friendly name (display_name for files, name/title for
+    // others). Used to label unmatched-link warnings with the actual filename
+    // instead of an opaque numeric ID.
+    const sourceNames = {};
 
     await Promise.all([
       // Standard name-based matching for non-file types.
@@ -1135,13 +1304,16 @@ export default function ClassPlannerApp() {
           if (it[t.nameField]) tgtByName[it[t.nameField]] = String(it[t.idField]);
         });
         const map = {};
+        const namesForType = {};
         src.forEach((it) => {
           const name = it[t.nameField];
           const oldId = String(it[t.idField]);
+          if (name) namesForType[oldId] = name;
           const newId = name ? tgtByName[name] : null;
           if (newId) map[oldId] = newId;
         });
         remap[t.key] = map;
+        sourceNames[t.key] = namesForType;
       }),
 
       // Files: (display_name, size) match first, then display_name only.
@@ -1162,23 +1334,28 @@ export default function ClassPlannerApp() {
         });
 
         const map = {};
+        const namesForFiles = {};
         src.forEach((f) => {
+          const oldId = String(f.id);
+          const display = f.display_name || f.filename || `file#${oldId}`;
+          namesForFiles[oldId] = display;
           const sized = `${f.display_name}|${f.size}`;
           let candidates = tgtBySizedName[sized] || tgtByName[f.display_name] || [];
           if (candidates.length === 1) {
-            map[String(f.id)] = String(candidates[0].id);
+            map[oldId] = String(candidates[0].id);
           } else if (candidates.length > 1) {
             // Multiple matches — pick first deterministically and warn.
-            map[String(f.id)] = String(candidates[0].id);
+            map[oldId] = String(candidates[0].id);
             ambiguousFiles.push({ filename: f.display_name, candidates: candidates.length });
           }
           // else: no match — leave unmapped; rewriteEmbeddedLinks will count it.
         });
         remap.files = map;
+        sourceNames.files = namesForFiles;
       })(),
     ]);
 
-    return { remap, ambiguousFiles };
+    return { remap, ambiguousFiles, sourceNames };
   };
 
   /**
@@ -1208,6 +1385,28 @@ export default function ClassPlannerApp() {
     const result = importTemplate(template, s.setup);
     const warnings = [];
 
+    // Diagnostic so we can see what setups + dates each side is using.
+    // If notes land on unexpected dates, this tells us whether the source
+    // state's setup or the target setup is the bad input.
+    // eslint-disable-next-line no-console
+    console.log('[CanvasSchedulePlugin] Schedule remap diagnostic', {
+      sourceSetup: sourceState.setup,
+      targetSetup: s.setup,
+      template: {
+        totalTeachingDays: template.totalTeachingDays,
+        slotCount: template.slots.length,
+        extraSlotCount: (template.extraSlots || []).length,
+        sampleSlot: template.slots[0],
+        sampleExtraSlot: (template.extraSlots || [])[0],
+      },
+      result: {
+        scheduleDates: Object.keys(result.schedule).slice(0, 8),
+        extraDays: result.extraDays,
+        droppedExtras: result.droppedExtras,
+        itemCount: Object.keys(result.items).length,
+      },
+    });
+
     // Build the embedded-link remap and the target's assignment list in
     // parallel.
     const [remapResult, assignmentList] = await Promise.all([
@@ -1215,6 +1414,7 @@ export default function ClassPlannerApp() {
       CanvasAPI.listAssignments(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId).catch(() => []),
     ]);
     const linkRemap = remapResult.remap;
+    const sourceNames = remapResult.sourceNames || {};
     (remapResult.ambiguousFiles || []).forEach((f) => {
       warnings.push({ kind: 'ambiguous-file', filename: f.filename, candidates: f.candidates });
     });
@@ -1241,7 +1441,7 @@ export default function ClassPlannerApp() {
 
     let relinked = 0;
     let rewrittenNotes = 0;
-    const unmatchedLinkCounts = {}; // { [type]: count }
+    const unmatchedLinks = []; // [{ type, sourceId, sourceName, noteSnippet }]
     Object.values(result.items).forEach((item) => {
       if (item.type === 'assign' && item.title) {
         const match = titleToNew[item.title];
@@ -1255,13 +1455,19 @@ export default function ClassPlannerApp() {
         }
       }
       if (item.html) {
+        const noteSnippet = item.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
         const rewritten = rewriteEmbeddedLinks(
           item.html, sourceCourseId, s.canvas.courseId, linkRemap,
-          ({ type }) => {
+          ({ type, id }) => {
             // Pages keep their slug across course copy, so an unmapped
             // page slug usually still resolves — don't warn about those.
             if (type === 'pages') return;
-            unmatchedLinkCounts[type] = (unmatchedLinkCounts[type] || 0) + 1;
+            unmatchedLinks.push({
+              type,
+              sourceId: id,
+              sourceName: sourceNames[type]?.[id] || null,
+              noteSnippet,
+            });
           },
         );
         if (rewritten !== item.html) {
@@ -1270,9 +1476,7 @@ export default function ClassPlannerApp() {
         }
       }
     });
-    Object.entries(unmatchedLinkCounts).forEach(([type, count]) => {
-      warnings.push({ kind: 'unmatched-link', type, count });
-    });
+    unmatchedLinks.forEach((u) => warnings.push({ kind: 'unmatched-link', ...u }));
 
     // Merge into current state (additive — same pattern as importSemesterTemplate).
     updateState((cur) => {
@@ -1358,7 +1562,7 @@ export default function ClassPlannerApp() {
    * placement) and re-maps it onto the current semester. Returns the
    * import summary in `result.schedule`.
    */
-  const cloneCourseFrom = async (sourceCourseId, onProgress, shouldStop) => {
+  const cloneCourseFrom = async (sourceCourseId, onProgress, shouldStop, overwrite = false) => {
     const s = stateRef.current;
     if (!s.canvas.connected || !s.canvas.courseId) {
       return { ok: false, error: 'Pick a target course first' };
@@ -1373,8 +1577,14 @@ export default function ClassPlannerApp() {
     // Load source planner state up front so we can compute date_shift_options
     // and have it ready for import once the migration completes. Falls back
     // to Canvas's course.start_at/end_at if the source course has no saved
-    // planner state.
-    const sourceState = await loadSourcePlannerState(sourceCourseId, s.canvas.baseUrl, s.canvas.token);
+    // planner state. The diag object accumulates what each lookup path
+    // returned so the panel can surface it without DevTools.
+    const sourceDiag = {
+      localStorage: 'not checked',
+      sourceCanvasFiles: 'not checked',
+      targetCanvasFiles: 'not checked (only consulted after migration)',
+    };
+    const sourceState = await loadSourcePlannerState(sourceCourseId, s.canvas.baseUrl, s.canvas.token, sourceDiag);
     const sourceCourseMeta = s.canvas.courses.find((c) => String(c.id) === String(sourceCourseId));
     const sourceStart = sourceState?.setup?.startDate || sourceCourseMeta?.startAt?.slice(0, 10);
     const sourceEnd = sourceState?.setup?.endDate || sourceCourseMeta?.endAt?.slice(0, 10);
@@ -1385,6 +1595,72 @@ export default function ClassPlannerApp() {
       new_start_date: s.setup.startDate,
       new_end_date: s.setup.endDate,
     } : null;
+
+    // Start the elapsed-time clock here so it covers both the optional
+    // overwrite step and the subsequent migration polling.
+    const startedAt = Date.now();
+
+    // Destructive pre-step: wipe the target course before copying.
+    //
+    // Two-tier strategy:
+    //   1. Try Canvas Course Reset (`POST /reset_content`) — one API call,
+    //      Canvas archives all content server-side. Requires the token to
+    //      have the `manage_courses_reset` permission, which most
+    //      institutions restrict to admins.
+    //   2. On 403 fall back to per-item DELETEs (manuallyWipeCourse) using
+    //      ordinary content-edit permissions. Slower (hundreds of calls)
+    //      but works for the typical instructor token.
+    //
+    // Either way we also clear local planner state so old cards with stale
+    // canvasIds don't linger after Canvas-side content is gone.
+    if (overwrite) {
+      onProgress?.({ state: 'resetting', elapsedSec: 0 });
+      let resetOk = false;
+      try {
+        await CanvasAPI.resetCourseContent(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+        resetOk = true;
+      } catch (e) {
+        if (!/\b403\b/.test(e.message)) {
+          return { ok: false, error: `Reset failed: ${e.message}` };
+        }
+        showToast('Canvas Course Reset denied — falling back to per-item deletion (slower)');
+      }
+
+      if (!resetOk) {
+        try {
+          const wipeResult = await manuallyWipeCourse(
+            s.canvas.baseUrl, s.canvas.token, s.canvas.courseId,
+            (p) => onProgress?.({
+              state: 'deleting',
+              done: p.done, total: p.total,
+              elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
+            }),
+          );
+          if (wipeResult.failures.length > 0) {
+            const sample = wipeResult.failures.slice(0, 3).map((f) => `${f.type}:${f.name}`).join(', ');
+            showToast(
+              `Deleted ${wipeResult.deleted}/${wipeResult.total}; ${wipeResult.failures.length} failed (${sample}…). ` +
+              `Continuing with copy.`,
+              'err'
+            );
+          }
+        } catch (e2) {
+          return { ok: false, error: `Manual wipe failed: ${e2.message}` };
+        }
+      }
+
+      updateState((st) => {
+        st.items = {};
+        st.schedule = {};
+        st.holidays = {};
+        st.modules = {};
+        st.unscheduled = [];
+        st.extraDays = [];
+        st.pendingCreations = [];
+        st.publishHistory = [];
+        return st;
+      });
+    }
 
     let migration;
     try {
@@ -1398,7 +1674,6 @@ export default function ClassPlannerApp() {
     // Adaptive polling: every 3s for the first 2 min, then 10s up to 10 min,
     // then 30s after that. No hard timeout — Canvas may take a while on
     // large courses, especially if there are many files.
-    const startedAt = Date.now();
     const pickInterval = (elapsedSec) => {
       if (elapsedSec < 120) return 3000;
       if (elapsedSec < 600) return 10000;
@@ -1407,17 +1682,57 @@ export default function ClassPlannerApp() {
 
     const finishWithSchedule = async () => {
       let schedule = { hadSource: false };
+
+      // Post-migration fallback for source planner state: Canvas's migration
+      // copies source's files to the target, so if source had ever published
+      // `schedule-planner.json` to its Canvas Files, it now lives in the
+      // target's Files too. Populates sourceDiag.targetCanvasFiles with
+      // user-facing info shown in the panel.
+      let effectiveSourceState = sourceState;
+      if (!effectiveSourceState) {
+        try {
+          const files = await CanvasAPI.listFiles(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+          // eslint-disable-next-line no-console
+          console.log('[CanvasSchedulePlugin] Post-migration files in target:',
+            files.map((f) => ({ id: f.id, name: f.display_name || f.filename, size: f.size })));
+          const match = files.find((f) => {
+            const name = (f.display_name || f.filename || '').toLowerCase();
+            return name === 'schedule-planner.json';
+          });
+          if (match) {
+            const fromTarget = await CanvasAPI.downloadSchedule(
+              s.canvas.baseUrl, s.canvas.token, s.canvas.courseId
+            );
+            if (fromTarget && fromTarget.items && fromTarget.setup) {
+              effectiveSourceState = fromTarget;
+              sourceDiag.targetCanvasFiles = `found (${Object.keys(fromTarget.items).length} items)`;
+            } else {
+              sourceDiag.targetCanvasFiles = 'found file but content malformed';
+            }
+          } else {
+            const sampleNames = files.slice(0, 8).map((f) => f.display_name || f.filename).filter(Boolean).join(', ');
+            sourceDiag.targetCanvasFiles =
+              files.length === 0
+                ? 'no files in target — migration may not have copied source files'
+                : `no schedule-planner.json among ${files.length} files (sample: ${sampleNames || '(unnamed)'})`;
+          }
+        } catch (e) {
+          sourceDiag.targetCanvasFiles = `error: ${e.message}`;
+        }
+      } else {
+        sourceDiag.targetCanvasFiles = 'skipped (already found before migration)';
+      }
+
+      // Step 1: import the source course's planner state if available
       try {
-        if (sourceState) {
-          // Signal the panel that we've moved past the Canvas migration into
-          // the local-side import + date push phase.
+        if (effectiveSourceState) {
           onProgress?.({
             state: 'syncing',
             completion: 100,
             elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
           });
           schedule = await importScheduleFromSource(
-            sourceCourseId, sourceState,
+            sourceCourseId, effectiveSourceState,
             (p) => onProgress?.({
               ...p,
               elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
@@ -1425,11 +1740,90 @@ export default function ClassPlannerApp() {
           );
         }
       } catch (e) {
-        schedule = { hadSource: false, error: e.message };
+        // eslint-disable-next-line no-console
+        console.error('[CanvasSchedulePlugin] importScheduleFromSource threw:', e);
+        schedule = { hadSource: false, error: e.message, errorStack: e.stack };
       }
-      const msg = schedule.hadSource
-        ? `Course copied — imported ${schedule.itemCount} planner items (${schedule.relinked} re-linked)`
-        : 'Course content copied — refresh to load assignments';
+
+      // Step 2: pull the *target* course's assignments + assignment groups
+      // into planner state. Runs whether or not the source-state import
+      // happened. Non-destructive — existing items matched by canvasId just
+      // get field refreshes (no date moves). New Canvas items (those not
+      // already placed by Step 1) get added fresh.
+      //
+      // This is what makes the post-clone schedule actually populate: the
+      // user's target course is typically brand-new with no published
+      // schedule, so without this step the planner stays empty even though
+      // Canvas has all the copied assignments.
+      onProgress?.({
+        state: 'loading-canvas',
+        elapsedSec: Math.floor((Date.now() - startedAt) / 1000),
+      });
+      try {
+        const cur = stateRef.current;
+        const [list, groups] = await Promise.all([
+          CanvasAPI.listAssignments(cur.canvas.baseUrl, cur.canvas.token, cur.canvas.courseId),
+          CanvasAPI.listAssignmentGroups(cur.canvas.baseUrl, cur.canvas.token, cur.canvas.courseId).catch(() => []),
+        ]);
+        let canvasAdded = 0;
+        updateState((st) => {
+          const groupsMap = {};
+          (Array.isArray(groups) ? groups : []).forEach((g, i) => {
+            groupsMap[g.id] = { id: g.id, name: g.name, color: GROUP_COLORS[i % GROUP_COLORS.length] };
+          });
+          st.canvas.assignmentGroups = groupsMap;
+
+          const teachingNow = new Set(generateClassDays(st.setup.startDate, st.setup.endDate, st.setup.classDays));
+          list.forEach((a) => {
+            const existing = Object.values(st.items).find((it) => it.type === 'assign' && it.canvasId === a.id);
+            if (existing) {
+              existing.title = a.name;
+              existing.points = a.points_possible || 0;
+              existing.htmlUrl = a.html_url;
+              existing.isQuiz = assignmentIsQuiz(a);
+              if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
+              return;
+            }
+            const id = uid();
+            const due = a.due_at ? localDateStr(a.due_at) : null;
+            st.items[id] = {
+              id, type: 'assign', title: a.name, points: a.points_possible || 0,
+              canvasId: a.id, htmlUrl: a.html_url, dueDate: due,
+              groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a),
+            };
+            if (due) {
+              if (!teachingNow.has(due) && !st.extraDays.includes(due)) st.extraDays.push(due);
+              st.schedule[due] = st.schedule[due] || [];
+              st.schedule[due].push(id);
+            } else {
+              st.unscheduled.push(id);
+            }
+            canvasAdded++;
+          });
+          st.loadedAt = new Date().toISOString();
+          return st;
+        });
+        schedule.canvasAdded = canvasAdded;
+      } catch (e) {
+        schedule.canvasLoadError = e.message;
+      }
+
+      // Attach diag info so the panel can show what we tried.
+      schedule.sourceDiag = sourceDiag;
+
+      // Step 3: toast
+      const parts = [];
+      if (schedule.hadSource) {
+        parts.push(`${schedule.itemCount} planner items imported (${schedule.relinked} re-linked)`);
+      }
+      if (schedule.canvasAdded) {
+        parts.push(`${schedule.canvasAdded} Canvas item${schedule.canvasAdded === 1 ? '' : 's'} loaded`);
+      }
+      const msg = parts.length
+        ? `Course copied — ${parts.join(', ')}`
+        : (schedule.canvasLoadError
+            ? `Migration done but couldn't load assignments: ${schedule.canvasLoadError}`
+            : 'Course content copied');
       showToast(msg);
       return { ok: true, schedule };
     };
@@ -1487,8 +1881,6 @@ export default function ClassPlannerApp() {
         state={state} isStudent={isStudent} hashStudent={hashStudent}
         allDays={allDays} filteredDays={filteredDays}
         searchQuery={searchQuery} onSearchChange={setSearchQuery}
-        filterGroup={filterGroup} onFilterGroupChange={setFilterGroup}
-        assignmentGroups={state.canvas.assignmentGroups || {}}
         darkMode={darkMode} undoStack={undoStack} redoStack={redoStack}
         onToggleDark={() => setDarkMode((d) => !d)}
         onToggleStudent={() => updateState((s) => { s.studentView = !s.studentView; return s; })}
@@ -1545,6 +1937,7 @@ export default function ClassPlannerApp() {
               onMoveItem={moveItem} onUpdateItem={updateItem} onDeleteItem={deleteItem}
               onDuplicate={duplicateItem} onReorder={reorderOnDay}
               onAddNote={addNoteOnDay} onAddAssignment={startAssignmentCreation}
+              onAddQuiz={startQuizCreation}
               onAddExtraDay={addExtraDay} onRemoveExtraDay={removeExtraDay}
               onToggleHoliday={toggleHoliday} onAddModule={addModuleHeader}
               onRemoveModule={removeModuleHeader}

@@ -15,7 +15,6 @@ import { IconButton, ToggleButton, inputStyle } from './ui.jsx';
 export default function Header({
   state, isStudent, hashStudent, allDays, filteredDays,
   searchQuery, onSearchChange,
-  filterGroup, onFilterGroupChange, assignmentGroups,
   darkMode, undoStack, redoStack,
   onToggleDark, onToggleStudent, onUndo, onRedo, onExportICal,
   onShowShiftModal, onPublish, publishing, onShareLink, lastPublishedUrl, onToggleSetup,
@@ -23,9 +22,7 @@ export default function Header({
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef(null);
-  const isFiltering = searchQuery.trim().length > 0 || filterGroup !== null;
-  const groupList = Object.values(assignmentGroups || {});
-  const hasGroups = groupList.length > 0;
+  const isFiltering = searchQuery.trim().length > 0;
 
   const toggleSearch = () => {
     if (searchOpen) {
@@ -109,26 +106,6 @@ export default function Header({
             <IconButton onClick={toggleSearch} aria-label={searchOpen ? 'Close search' : 'Search schedule'}>
               <Search size={16} color={isFiltering ? T.inkBlue : T.ink} />
             </IconButton>
-            {hasGroups && (
-              <select
-                value={filterGroup ?? ''}
-                onChange={(e) => onFilterGroupChange(e.target.value ? Number(e.target.value) : null)}
-                aria-label="Filter by assignment group"
-                style={{
-                  ...inputStyle(),
-                  fontSize: '11px',
-                  padding: '4px 6px',
-                  maxWidth: 150,
-                  fontFamily: FONT_MONO,
-                  color: filterGroup !== null ? T.inkBlue : T.muted,
-                }}
-              >
-                <option value="">All groups</option>
-                {groupList.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            )}
             {!hashStudent && (
               <ToggleButton active={isStudent} onClick={onToggleStudent}
                 aria-label={isStudent ? 'Switch to editor view' : 'Switch to student view'}>

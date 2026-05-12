@@ -13,7 +13,7 @@ export default function ScheduleTable({
   allDays, state, isStudent, teachingSet, pendingByDate,
   draggingId, autoEditId, clearAutoEdit,
   onMoveItem, onUpdateItem, onDeleteItem, onDuplicate, onReorder,
-  onAddNote, onAddAssignment, onAddExtraDay, onRemoveExtraDay,
+  onAddNote, onAddAssignment, onAddQuiz, onAddExtraDay, onRemoveExtraDay,
   onToggleHoliday, onAddModule, onRemoveModule,
   onShowRecurringModal,
   allDaysSet, assignmentGroups,
@@ -84,6 +84,7 @@ export default function ScheduleTable({
               onDuplicate={(id) => onDuplicate(id, d)}
               onAddNote={() => onAddNote(d)}
               onAddAssignment={() => onAddAssignment(d)}
+              onAddQuiz={() => onAddQuiz(d)}
               onAddExtraDay={onAddExtraDay}
               onRemoveExtraDay={() => onRemoveExtraDay(d)}
               onToggleHoliday={() => onToggleHoliday(d)}
