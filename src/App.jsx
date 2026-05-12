@@ -29,7 +29,7 @@ import ScheduleTable from './components/ScheduleTable.jsx';
 import { PublishBanner, ActivityLog } from './components/PublishBanner.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
-import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/Panels.jsx';
+import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/panels/index.js';
 import { appStyles } from './styles.js';
 
 // ── Initial state ────────────────────────────────────────────────
