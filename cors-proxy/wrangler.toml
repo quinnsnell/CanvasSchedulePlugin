@@ -15,3 +15,7 @@ compatibility_date = "2024-01-01"
 # per-professor — the worker validates the caller's Canvas PAT against
 # Canvas itself and only accepts writes from users with teacher-level
 # permissions on the course identified in the URL.
+
+[[kv_namespaces]]
+binding = "ICAL_KV"
+id = "31d8ec840cf041e0b0c2bcb71a6410aa"

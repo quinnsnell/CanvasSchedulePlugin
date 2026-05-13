@@ -25,13 +25,21 @@ done
 
 # ── Preflight ──────────────────────────────────────────────────
 
-if ! command -v wrangler >/dev/null 2>&1; then
-  echo "ERROR: wrangler not installed. Try: npm install -g wrangler" >&2
+# Resolve a wrangler invocation. Prefer a global install, fall back to
+# pnpm dlx (no install required, fetches once and caches).
+if command -v wrangler >/dev/null 2>&1; then
+  WRANGLER=(wrangler)
+elif command -v pnpm >/dev/null 2>&1; then
+  WRANGLER=(pnpm dlx wrangler)
+else
+  echo "ERROR: neither wrangler nor pnpm is on PATH." >&2
+  echo "       Install pnpm (https://pnpm.io) or run: pnpm add -g wrangler" >&2
   exit 1
 fi
+echo "Using: ${WRANGLER[*]}"
 
-if ! wrangler whoami >/dev/null 2>&1; then
-  echo "ERROR: not logged in. Run: wrangler login" >&2
+if ! "${WRANGLER[@]}" whoami >/dev/null 2>&1; then
+  echo "ERROR: not logged in. Run: ${WRANGLER[*]} login" >&2
   exit 1
 fi
 
@@ -50,12 +58,12 @@ if grep -q '^\[\[kv_namespaces\]\]' wrangler.toml && grep -q 'binding *= *"ICAL_
 else
   echo "Creating KV namespace ICAL_KV…"
   # Try to find an existing namespace first to avoid duplicates
-  KV_ID=$(wrangler kv:namespace list 2>/dev/null \
+  KV_ID=$("${WRANGLER[@]}" kv namespace list 2>/dev/null \
     | awk -v name="${WORKER_NAME}-ICAL_KV" '$0 ~ name {gsub(/[",]/,""); for (i=1;i<=NF;i++) if ($i=="\"id\":") print $(i+1)}' \
     | head -1 || true)
 
   if [[ -z "$KV_ID" ]]; then
-    CREATE_OUT=$(wrangler kv:namespace create ICAL_KV 2>&1)
+    CREATE_OUT=$("${WRANGLER[@]}" kv namespace create ICAL_KV 2>&1)
     KV_ID=$(echo "$CREATE_OUT" | awk -F'"' '/id *= *"/ {print $2; exit}')
     if [[ -z "$KV_ID" ]]; then
       echo "ERROR: could not parse KV id from wrangler output:" >&2
@@ -76,7 +84,7 @@ fi
 # ── Deploy ─────────────────────────────────────────────────────
 
 echo "Deploying…"
-DEPLOY_OUT=$(wrangler deploy 2>&1)
+DEPLOY_OUT=$("${WRANGLER[@]}" deploy 2>&1)
 echo "$DEPLOY_OUT" | tail -5
 WORKER_URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[^ ]+\.workers\.dev' | head -1 || true)
 
