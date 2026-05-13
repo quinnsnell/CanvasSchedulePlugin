@@ -29,7 +29,14 @@ export default function useUndoableState(initial) {
         setUndoStack((stack) => [...stack.slice(-(UNDO_STACK_LIMIT - 1)), structuredClone(s)]);
         setRedoStack([]);
       }
-      return fn(structuredClone(s));
+      const next = fn(structuredClone(s));
+      // Bump a monotonic version counter on user-meaningful edits so callers
+      // (e.g., the unpublished-changes badge) can reliably detect "this state
+      // differs from the last published snapshot" without timestamp races.
+      if (next && !skipUndo) {
+        next.version = (s?.version || 0) + 1;
+      }
+      return next;
     });
   }, []);
 
