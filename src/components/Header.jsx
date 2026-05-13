@@ -58,6 +58,14 @@ export default function Header({
                 <div>{fmtFull(state.setup.endDate)}</div>
               </div>
             )}
+            {state.icalUrl && (
+              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
+                <a href={state.icalUrl} target="_blank" rel="noreferrer"
+                   style={{ color: T.inkBlue, textDecoration: 'underline' }}>
+                  Subscribe to calendar (.ics)
+                </a>
+              </div>
+            )}
             {!isStudent && (
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
                 <div>Build {new Date(__BUILD_TIME__).toLocaleString()}</div>

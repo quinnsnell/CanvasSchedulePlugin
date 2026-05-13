@@ -972,37 +972,47 @@ export default function ClassPlannerApp() {
       const dayCount = Object.keys(s.schedule).filter((d) => (s.schedule[d] || []).length > 0).length;
       const historyEntry = { timestamp: now, itemCount, dayCount };
       const prevHistory = s.publishHistory || [];
-      const publishData = {
-        setup: s.setup, items: s.items, schedule: s.schedule,
-        extraDays: s.extraDays, unscheduled: s.unscheduled,
-        holidays: s.holidays || {}, modules: s.modules || {},
-        publishHistory: [...prevHistory, historyEntry],
-        publishedAt: now,
-      };
-      await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
-      // Also upload an .ics export so students can grab a downloadable
-      // calendar file from Canvas Files. The presigned public URL we
-      // surface is short-lived (Canvas issues ~1-hour S3 URLs) but the
-      // file itself sticks around — the Canvas Files UI link is permanent.
+      // Upload .ics FIRST so we can include its stable download URL in
+      // the published JSON (which the student-side planner reads).
+      // Two URLs for the same file: presigned (for the instructor's
+      // immediate copy/click — Canvas issues ~1-hour S3 URLs) and the
+      // auth-gated Canvas Files link (stable, embedded in the HTML and
+      // student view).
       let icalUrl = null;
+      let icalDownloadUrl = null;
       try {
         await CanvasAPI.uploadIcal(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, generateICal(s));
-        icalUrl = await CanvasAPI.getPublicIcalUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId);
+        [icalUrl, icalDownloadUrl] = await Promise.all([
+          CanvasAPI.getPublicIcalUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId),
+          CanvasAPI.getIcalDownloadUrl(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId),
+        ]);
       } catch (e) {
         // Don't fail the whole publish if iCal upload fails — the JSON
         // is the primary artifact, the iCal is a nice-to-have.
         // eslint-disable-next-line no-console
         console.warn('iCal upload failed:', e.message);
       }
+      const publishData = {
+        setup: s.setup, items: s.items, schedule: s.schedule,
+        extraDays: s.extraDays, unscheduled: s.unscheduled,
+        holidays: s.holidays || {}, modules: s.modules || {},
+        publishHistory: [...prevHistory, historyEntry],
+        publishedAt: now,
+        icalUrl: icalDownloadUrl,
+      };
+      await CanvasAPI.uploadSchedule(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, publishData);
       updateState((st) => {
         st.publishHistory = [...(st.publishHistory || []), historyEntry];
         st.loadedAt = now;
         // Snapshot the version at publish time. UnpublishedBadge compares
         // current state.version to this — different = unpublished edits.
         st.publishedVersion = st.version || 0;
+        // Persist the iCal download URL so the in-app planner (including
+        // student view) can surface it across reloads.
+        if (icalDownloadUrl) st.icalUrl = icalDownloadUrl;
         return st;
       }, true);
-      const html = renderScheduleHtml(s, s.setup.courseTitle);
+      const html = renderScheduleHtml({ ...s, icalUrl: icalDownloadUrl }, s.setup.courseTitle);
       const slug = await CanvasAPI.publishPage(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, 'Schedule', html);
       const pageUrl = `${s.canvas.baseUrl.replace(/\/+$/, '')}/courses/${s.canvas.courseId}/pages/${slug}`;
       setStudentEmbed({ pageUrl, icalUrl });

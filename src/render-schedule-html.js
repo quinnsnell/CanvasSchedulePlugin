@@ -122,7 +122,13 @@ export default function renderScheduleHtml(s, courseTitle) {
   return `${darkStyleBlock}
   <div class="schedule-wrap" style="max-width: 1152px; margin: 0 auto;">
     <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
-      <caption style="text-align: left; padding: 12px 16px; font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: ${v('ink', L.ink)}; caption-side: top;">${courseTitle || 'Course Schedule'}</caption>
+      <caption style="text-align: left; padding: 12px 16px 6px; font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: ${v('ink', L.ink)}; caption-side: top;">
+        ${courseTitle || 'Course Schedule'}
+        ${s.icalUrl ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: ${v('ink-mid', L.inkMid)};">
+          <a href="${s.icalUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline;">Download calendar (.ics)</a>
+          — import into Google, Apple, or Outlook Calendar
+        </div>` : ''}
+      </caption>
       <thead><tr style="background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">
         <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
         <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)};">Readings · Assignments · Materials</th>

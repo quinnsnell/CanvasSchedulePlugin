@@ -356,6 +356,19 @@ export const CanvasAPI = {
   },
 
   /**
+   * Permanent (auth-gated) download URL for the iCal file in this course's
+   * Files. Stable across re-publishes since Canvas reuses the file id.
+   * Returns null if the file isn't there.
+   */
+  async getIcalDownloadUrl(baseUrl, token, courseId) {
+    const files = await canvasFetch(baseUrl, token,
+      `/courses/${courseId}/files?search_term=${ICAL_FILENAME}&per_page=10`);
+    const file = files.find((f) => f.display_name === ICAL_FILENAME || f.filename === ICAL_FILENAME);
+    if (!file) return null;
+    return `${baseUrl.replace(/\/+$/, '')}/courses/${courseId}/files/${file.id}/download?download_frd=1`;
+  },
+
+  /**
    * Trigger a server-side Canvas course copy. Canvas copies assignments,
    * quizzes, files, modules, pages, discussions, and rubrics from
    * sourceCourseId into targetCourseId, rewriting internal IDs and
