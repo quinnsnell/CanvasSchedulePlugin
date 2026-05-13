@@ -340,11 +340,19 @@ export default function ClassPlannerApp() {
     // `moduleTitle()` treats this as Canvas-sourced.
     if (typeof activeId === 'string' && activeId.startsWith('module:')) {
       const moduleData = active.data?.current;
+      // Resolve target date from multiple shapes of `over`:
+      //  - Day droppable (data: { type:'day', date })
+      //  - Day droppable id `day:<date>`
+      //  - Dropped on an item card → look up which day owns that item
       let targetDate = null;
       if (over.data?.current?.type === 'day') {
         targetDate = over.data.current.date;
       } else if (typeof overId === 'string' && overId.startsWith('day:')) {
         targetDate = overId.slice(4);
+      } else {
+        // Dropped on a sortable item — find which day contains it.
+        targetDate = findItemContainer(overId);
+        if (targetDate === 'unscheduled') targetDate = null;
       }
       if (!targetDate || !moduleData) return;
       setState((prev) => {
