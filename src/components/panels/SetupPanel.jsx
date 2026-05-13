@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../../theme.js';
 import { DAY_CODES, DAY_SHORT, parseICal, parseCSV } from '../../utils.js';
-import { CORS_PROXY, CORS_PROXY_DEFAULT, getCorsProxy, setCorsProxy, getIcalUploadSecret, setIcalUploadSecret } from '../../canvas-api.js';
+import { CORS_PROXY, CORS_PROXY_DEFAULT, getCorsProxy, setCorsProxy } from '../../canvas-api.js';
 import { Field, IconButton, ActionButton, inputStyle } from '../ui.jsx';
 import CloneWarnings from './CloneWarnings.jsx';
 
@@ -26,7 +26,6 @@ export default function SetupPanel({ state, updateState, onImport, onExportTempl
   const [baseUrl, setBaseUrl] = useState(state.canvas.baseUrl || '');
   const [token, setToken] = useState(state.canvas.token || '');
   const [proxyUrl, setProxyUrl] = useState(CORS_PROXY || '');
-  const [icalSecret, setIcalSecret] = useState(getIcalUploadSecret());
   const [busy, setBusy] = useState(false);
   const [canvasStatus, setCanvasStatus] = useState(null);
 
@@ -197,12 +196,6 @@ export default function SetupPanel({ state, updateState, onImport, onExportTempl
             <Field label="CORS proxy URL (optional)">
               <input placeholder={CORS_PROXY_DEFAULT}
                 value={proxyUrl} onChange={(e) => handleProxyChange(e.target.value)} style={inputStyle()} />
-            </Field>
-            <Field label="Calendar upload secret (optional)">
-              <input type="password" placeholder="auto-updating .ics feed"
-                value={icalSecret}
-                onChange={(e) => { setIcalSecret(e.target.value); setIcalUploadSecret(e.target.value); }}
-                style={inputStyle()} />
             </Field>
           </div>
           <div className="mt-3 flex items-center gap-3 flex-wrap">

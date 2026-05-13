@@ -6,23 +6,26 @@
 //    Usage: https://<worker>.workers.dev/<canvas-host>/api/v1/...
 //
 // 2. Public .ics subscription feed (path /calendar/<courseKey>.ics)
-//    - GET  → returns the latest .ics from KV with public CORS + text/calendar
-//    - PUT  → upload latest .ics (requires X-Upload-Secret matching env.UPLOAD_SECRET)
+//    - GET → returns the latest .ics from KV with public CORS + text/calendar
+//    - PUT → upload latest .ics. Auth: Authorization: Bearer <canvas-pat>.
+//            The worker validates the PAT against Canvas itself by calling
+//            GET /api/v1/courses/<courseId>?include[]=permissions and
+//            checking the user has teacher-level permissions on that course.
+//            No shared upload secret — each professor uses their own PAT.
+//
 //    The planner calls PUT on every Publish; calendar apps (Google/Apple/
 //    Outlook) poll GET periodically and pick up changes automatically.
 //
 // Setup checklist (see wrangler.toml for binding placeholders):
 //   1. wrangler kv:namespace create ICAL_KV
 //      → copy the returned id into wrangler.toml [[kv_namespaces]] block
-//   2. wrangler secret put UPLOAD_SECRET
-//      → choose a strong random string; paste the same value into the
-//        planner Setup panel's "Calendar upload secret" field
-//   3. wrangler deploy
+//   2. wrangler deploy
+//   (No worker secret needed — auth is per-professor via their Canvas PAT.)
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Upload-Secret',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
 };
 
 // Cap KV writes at 512 KB. iCal feeds for a normal semester run well under
@@ -49,8 +52,9 @@ export default {
 
 async function handleCalendar(request, env, url) {
   // /calendar/<courseKey>.ics  →  courseKey = "byu.instructure.com-12345"
-  // Strip the prefix and trailing extension. Slashes inside the key are
-  // disallowed so a malformed path can't reach into KV with a wildcard.
+  // courseKey format: <canvas-host>-<courseId>. Canvas hosts may contain
+  // hyphens (e.g. my-school.instructure.com), so we rsplit on the last
+  // hyphen and require the trailing portion to be a numeric courseId.
   const raw = url.pathname.slice('/calendar/'.length).replace(/\.ics$/i, '');
   if (!raw || raw.includes('/')) {
     return new Response('Bad request', { status: 400, headers: CORS_HEADERS });
@@ -76,12 +80,23 @@ async function handleCalendar(request, env, url) {
   }
 
   if (request.method === 'PUT') {
-    if (!env.UPLOAD_SECRET) {
-      return new Response('Upload disabled (UPLOAD_SECRET not set)', { status: 503, headers: CORS_HEADERS });
+    // Parse courseKey into <host> + <courseId>.
+    const m = /^(.+)-(\d+)$/.exec(courseKey);
+    if (!m) {
+      return new Response('Bad courseKey format', { status: 400, headers: CORS_HEADERS });
     }
-    if (request.headers.get('X-Upload-Secret') !== env.UPLOAD_SECRET) {
-      return new Response('Unauthorized', { status: 401, headers: CORS_HEADERS });
+    const [, canvasHost, courseId] = m;
+
+    // Per-professor auth: validate the bearer token against Canvas itself.
+    const auth = request.headers.get('Authorization') || '';
+    if (!/^Bearer\s+\S+/i.test(auth)) {
+      return new Response('Missing Authorization: Bearer <canvas-pat>', { status: 401, headers: CORS_HEADERS });
     }
+    const ok = await canUserManageCourse(canvasHost, courseId, auth);
+    if (!ok) {
+      return new Response('Forbidden — Canvas PAT does not have teacher-level access to this course', { status: 403, headers: CORS_HEADERS });
+    }
+
     const body = await request.text();
     if (body.length > MAX_ICAL_BYTES) {
       return new Response('Too large', { status: 413, headers: CORS_HEADERS });
@@ -94,6 +109,30 @@ async function handleCalendar(request, env, url) {
   }
 
   return new Response('Method not allowed', { status: 405, headers: CORS_HEADERS });
+}
+
+/**
+ * Ask Canvas whether the bearer-token holder has teacher-level permission
+ * on the given course. Uses the standard ?include[]=permissions response;
+ * `manage_content` (or its newer equivalents) is true for teachers and TAs
+ * and false for students.
+ */
+async function canUserManageCourse(canvasHost, courseId, authHeader) {
+  const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions`;
+  let resp;
+  try {
+    resp = await fetch(apiUrl, { headers: { Authorization: authHeader } });
+  } catch {
+    return false;
+  }
+  if (!resp.ok) return false;
+  let data;
+  try { data = await resp.json(); } catch { return false; }
+  const p = data?.permissions || {};
+  // Accept any of the teacher-level permission keys Canvas uses across
+  // generations — older instances expose manage_content, newer ones
+  // split it into per-feature permissions.
+  return !!(p.manage_content || p.manage_course_content_edit || p.manage_assignments || p.update);
 }
 
 // ── Canvas API proxy (unchanged behavior) ──────────────────────

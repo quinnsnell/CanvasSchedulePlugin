@@ -5,23 +5,19 @@
 #   1. Verifies wrangler is installed and you're logged in
 #   2. Creates the ICAL_KV namespace (idempotent)
 #   3. Patches wrangler.toml with the binding (idempotent)
-#   4. Generates a random UPLOAD_SECRET, stores it as a worker secret,
-#      and prints it for you to paste into the planner Setup panel
-#   5. Deploys the worker
+#   4. Deploys the worker
 #
-# Re-run safe: existing KV is reused, but a fresh secret is generated
-# on every run unless you pass --keep-secret.
+# No upload secret needed — PUT auth is per-professor via their Canvas
+# PAT, validated by the worker against Canvas itself. Re-run safe.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-KEEP_SECRET=false
 for arg in "$@"; do
   case "$arg" in
-    --keep-secret) KEEP_SECRET=true ;;
     -h|--help)
-      sed -n '2,18p' "$0" | sed 's/^# \?//'
+      sed -n '2,12p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
   esac
@@ -77,19 +73,6 @@ id = "$KV_ID"
 EOF
 fi
 
-# ── Upload secret ──────────────────────────────────────────────
-
-if $KEEP_SECRET && wrangler secret list 2>/dev/null | grep -q '"name": *"UPLOAD_SECRET"'; then
-  echo "UPLOAD_SECRET already set — keeping (--keep-secret)"
-  SECRET=""
-else
-  # 32 url-safe bytes
-  SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null \
-    || openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
-  echo "Setting UPLOAD_SECRET…"
-  echo "$SECRET" | wrangler secret put UPLOAD_SECRET
-fi
-
 # ── Deploy ─────────────────────────────────────────────────────
 
 echo "Deploying…"
@@ -103,13 +86,10 @@ echo
 echo "──────────────────────────────────────────────────────────"
 echo "Done."
 [[ -n "$WORKER_URL" ]] && echo "Worker URL:  $WORKER_URL"
-if [[ -n "$SECRET" ]]; then
-  echo "Upload secret (paste into the planner Setup panel under"
-  echo "  'Calendar upload secret'):"
-  echo
-  echo "  $SECRET"
-  echo
-  echo "Then click Publish in the planner. Students subscribe to:"
-  [[ -n "$WORKER_URL" ]] && echo "  $WORKER_URL/calendar/<canvas-host>-<courseId>.ics"
-fi
+echo
+echo "Each professor just publishes from the planner — no secret to"
+echo "share. The worker validates each upload against their Canvas PAT."
+echo
+echo "Students subscribe to:"
+[[ -n "$WORKER_URL" ]] && echo "  $WORKER_URL/calendar/<canvas-host>-<courseId>.ics"
 echo "──────────────────────────────────────────────────────────"

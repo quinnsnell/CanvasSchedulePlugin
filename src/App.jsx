@@ -984,7 +984,7 @@ export default function ClassPlannerApp() {
       let icalDownloadUrl = null;  // stable Canvas Files URL (fallback)
       let icalFeedUrl = null;      // public worker feed (preferred subscribe URL)
       try {
-        icalFeedUrl = await uploadIcalFeed(s.canvas.baseUrl, s.canvas.courseId, icsText);
+        icalFeedUrl = await uploadIcalFeed(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, icsText);
       } catch { /* swallow — Canvas Files fallback below */ }
       try {
         await CanvasAPI.uploadIcal(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, icsText);

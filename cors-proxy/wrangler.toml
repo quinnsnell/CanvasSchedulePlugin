@@ -10,9 +10,8 @@ compatibility_date = "2024-01-01"
 # [[kv_namespaces]]
 # binding = "ICAL_KV"
 # id = "PUT_KV_NAMESPACE_ID_HERE"
-
-# Upload secret for PUT /calendar/<courseKey>.ics. Set via:
-#   wrangler secret put UPLOAD_SECRET
-# then enter the same value in the planner's Setup panel under
-# "Calendar upload secret". Without this, PUT returns 503 and the
-# planner falls back to the auth-gated Canvas Files link.
+#
+# No worker secrets required. PUT /calendar/<courseKey>.ics auth is
+# per-professor — the worker validates the caller's Canvas PAT against
+# Canvas itself and only accepts writes from users with teacher-level
+# permissions on the course identified in the URL.

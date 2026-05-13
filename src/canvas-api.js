@@ -33,23 +33,11 @@ export function setCorsProxy(url) {
 }
 
 // ── iCal subscription feed (Cloudflare Worker + KV) ───────────
-// Optional. When the user has configured an upload secret, we PUT
-// the .ics to /calendar/<courseKey>.ics on every Publish; calendar
-// apps subscribe to the corresponding GET URL and auto-refresh.
-// Without a secret, the planner falls back to the auth-gated Canvas
-// Files download link.
-
-export function getIcalUploadSecret() {
-  try { return localStorage.getItem('planner-ical-upload-secret') || ''; }
-  catch { return ''; }
-}
-
-export function setIcalUploadSecret(secret) {
-  try {
-    if (secret) localStorage.setItem('planner-ical-upload-secret', secret);
-    else localStorage.removeItem('planner-ical-upload-secret');
-  } catch {}
-}
+// On every Publish, the planner PUTs the .ics to the worker. The worker
+// validates the caller's Canvas PAT against Canvas itself (no shared
+// upload secret) — each professor's own token is the credential. If the
+// worker isn't deployed with /calendar/* support, the upload returns
+// non-OK and the caller falls back to the auth-gated Canvas Files link.
 
 /** Stable per-course key: <canvas-host>-<courseId>. URL-path safe. */
 export function icalCourseKey(baseUrl, courseId) {
@@ -63,19 +51,21 @@ export function icalFeedUrl(baseUrl, courseId, workerBase = CORS_PROXY) {
 }
 
 /**
- * Push the latest .ics to the worker. Returns the public feed URL on
- * success, or null on any failure (no upload secret, network error, etc.)
- * — failure is non-fatal; the caller should fall back to the Canvas
+ * Push the latest .ics to the worker, authenticated by the professor's
+ * Canvas PAT. Returns the public feed URL on success, or null on any
+ * failure — failure is non-fatal; the caller falls back to the Canvas
  * Files link.
  */
-export async function uploadIcalFeed(baseUrl, courseId, icsText) {
-  const secret = getIcalUploadSecret();
-  if (!secret) return null;
+export async function uploadIcalFeed(baseUrl, token, courseId, icsText) {
+  if (!token) return null;
   const url = icalFeedUrl(baseUrl, courseId);
   try {
     const resp = await fetch(url, {
       method: 'PUT',
-      headers: { 'Content-Type': 'text/calendar', 'X-Upload-Secret': secret },
+      headers: {
+        'Content-Type': 'text/calendar',
+        Authorization: `Bearer ${token}`,
+      },
       body: icsText,
     });
     if (!resp.ok) {
