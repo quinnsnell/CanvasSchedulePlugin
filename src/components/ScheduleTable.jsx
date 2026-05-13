@@ -38,7 +38,7 @@ export default function ScheduleTable({
     <div style={{ background: T.paper, border: `1px solid ${T.border}`, borderRadius: 6, overflow: 'hidden' }}>
       <div className="day-row" style={{ background: T.subtle, borderBottom: `1px solid ${T.border}` }}>
         <div className="col-header" style={{ borderRight: `1px solid ${T.border}` }}>Class meeting</div>
-        <div className="col-header">Readings · Assignments · Materials</div>
+        <div className="col-header">Readings · Assignments</div>
       </div>
       {allDays.map((d, idx) => {
         const isExtra = !teachingSet.has(d);

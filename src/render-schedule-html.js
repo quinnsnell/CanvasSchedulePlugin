@@ -133,7 +133,7 @@ export default function renderScheduleHtml(s, courseTitle) {
       </caption>
       <thead><tr style="background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">
         <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)}; border-right: 1px solid ${v('border', L.border)};">Class meeting</th>
-        <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)};">Readings · Assignments · Materials</th>
+        <th scope="col" style="padding: 10px 16px; text-align: left; font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)};">Readings · Assignments</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
