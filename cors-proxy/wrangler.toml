@@ -1,3 +1,18 @@
 name = "canvas-cors-proxy"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+
+# KV namespace for the .ics subscription feed. Create with:
+#   wrangler kv:namespace create ICAL_KV
+# then paste the returned id below. Optional — the proxy still works
+# for Canvas API calls without it; only /calendar/* routes need it.
+#
+# [[kv_namespaces]]
+# binding = "ICAL_KV"
+# id = "PUT_KV_NAMESPACE_ID_HERE"
+
+# Upload secret for PUT /calendar/<courseKey>.ics. Set via:
+#   wrangler secret put UPLOAD_SECRET
+# then enter the same value in the planner's Setup panel under
+# "Calendar upload secret". Without this, PUT returns 503 and the
+# planner falls back to the auth-gated Canvas Files link.

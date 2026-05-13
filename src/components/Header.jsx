@@ -62,7 +62,9 @@ export default function Header({
               <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
                 <a href={state.icalUrl} target="_blank" rel="noreferrer"
                    style={{ color: T.inkBlue, textDecoration: 'underline' }}>
-                  Subscribe to calendar (.ics)
+                  {state.icalUrl.includes('/calendar/')
+                    ? 'Subscribe to calendar (auto-updates)'
+                    : 'Download calendar (.ics)'}
                 </a>
               </div>
             )}
