@@ -62,14 +62,15 @@ export function appStyles() {
     .module-header {
       padding: 4px 12px 4px 10px;
       font-family: ${FONT_MONO}; font-size: 10px; font-weight: 600;
-      letter-spacing: 0.16em; text-transform: uppercase; color: ${T.inkMid};
-      background: ${T.subtle}; border-bottom: 1px solid ${T.border};
+      letter-spacing: 0.16em; text-transform: uppercase; color: ${T.inkBlue};
+      background: ${T.inkBlueSoft};
+      border-top: 1px solid ${T.inkBlue}; border-bottom: 1px solid ${T.inkBlue};
       border-left: 3px solid ${T.inkBlue};
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
       min-height: 22px;
     }
     .module-header-count {
-      font-weight: 400; color: ${T.muted}; letter-spacing: 0.04em;
+      font-weight: 400; color: ${T.inkMid}; letter-spacing: 0.04em;
       text-transform: none; margin-left: 8px;
     }
 
