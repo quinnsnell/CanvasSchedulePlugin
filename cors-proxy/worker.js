@@ -92,9 +92,13 @@ async function handleCalendar(request, env, url) {
     if (!/^Bearer\s+\S+/i.test(auth)) {
       return new Response('Missing Authorization: Bearer <canvas-pat>', { status: 401, headers: CORS_HEADERS });
     }
-    const ok = await canUserManageCourse(canvasHost, courseId, auth);
-    if (!ok) {
-      return new Response('Forbidden — Canvas PAT does not have teacher-level access to this course', { status: 403, headers: CORS_HEADERS });
+    const check = await canUserManageCourse(canvasHost, courseId, auth);
+    if (!check.ok) {
+      return new Response(
+        `Forbidden — Canvas PAT does not have teacher-level access to this course\n\n` +
+        `Canvas check details:\n${check.detail}`,
+        { status: 403, headers: CORS_HEADERS }
+      );
     }
 
     const body = await request.text();
@@ -112,27 +116,58 @@ async function handleCalendar(request, env, url) {
 }
 
 /**
- * Ask Canvas whether the bearer-token holder has teacher-level permission
- * on the given course. Uses the standard ?include[]=permissions response;
- * `manage_content` (or its newer equivalents) is true for teachers and TAs
- * and false for students.
+ * Ask Canvas whether the bearer-token holder has teacher-level access
+ * on the given course. Belt-and-suspenders: accept if EITHER a known
+ * teacher-level permission is true OR the user's enrollment in this
+ * course is teacher/ta/designer. Different Canvas versions expose
+ * different permission keys, so the enrollment fallback is the safety
+ * net for instances that don't return the perm keys we expect.
+ *
+ * Returns { ok, detail }; detail describes what was seen so a 403
+ * response can surface it for debugging.
  */
 async function canUserManageCourse(canvasHost, courseId, authHeader) {
-  const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions`;
+  const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions&include[]=enrollments`;
   let resp;
   try {
     resp = await fetch(apiUrl, { headers: { Authorization: authHeader } });
-  } catch {
-    return false;
+  } catch (e) {
+    return { ok: false, detail: `network error: ${e.message}` };
   }
-  if (!resp.ok) return false;
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    return { ok: false, detail: `Canvas returned ${resp.status} ${resp.statusText} for ${apiUrl}\n${body.slice(0, 500)}` };
+  }
   let data;
-  try { data = await resp.json(); } catch { return false; }
-  const p = data?.permissions || {};
-  // Accept any of the teacher-level permission keys Canvas uses across
-  // generations — older instances expose manage_content, newer ones
-  // split it into per-feature permissions.
-  return !!(p.manage_content || p.manage_course_content_edit || p.manage_assignments || p.update);
+  try { data = await resp.json(); } catch (e) {
+    return { ok: false, detail: `Canvas response not JSON: ${e.message}` };
+  }
+
+  const perms = data?.permissions || {};
+  const permKeys = ['manage_content', 'manage_course_content_edit', 'manage_assignments',
+                    'manage_assignments_edit', 'manage_calendar', 'update'];
+  const truePermKeys = permKeys.filter((k) => perms[k] === true);
+
+  const enrollments = Array.isArray(data?.enrollments) ? data.enrollments : [];
+  const teacherEnroll = enrollments.find((e) => {
+    const t = (e?.type || e?.role || '').toLowerCase();
+    return t.includes('teacher') || t.includes('ta') || t.includes('designer');
+  });
+
+  if (truePermKeys.length > 0) {
+    return { ok: true, detail: `permissions: ${truePermKeys.join(',')}` };
+  }
+  if (teacherEnroll) {
+    return { ok: true, detail: `enrollment: ${teacherEnroll.type || teacherEnroll.role}` };
+  }
+
+  return {
+    ok: false,
+    detail:
+      `permissions present: ${Object.keys(perms).join(', ') || '(none)'}\n` +
+      `permissions true: ${Object.entries(perms).filter(([, v]) => v === true).map(([k]) => k).join(', ') || '(none)'}\n` +
+      `enrollment types: ${enrollments.map((e) => e.type || e.role).join(', ') || '(none)'}`,
+  };
 }
 
 // ── Canvas API proxy (unchanged behavior) ──────────────────────

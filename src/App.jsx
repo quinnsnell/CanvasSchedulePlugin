@@ -983,9 +983,11 @@ export default function ClassPlannerApp() {
       let icalUrl = null;          // presigned Canvas URL (instructor banner)
       let icalDownloadUrl = null;  // stable Canvas Files URL (fallback)
       let icalFeedUrl = null;      // public worker feed (preferred subscribe URL)
+      let feedResult = null;
       try {
-        icalFeedUrl = await uploadIcalFeed(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, icsText);
-      } catch { /* swallow — Canvas Files fallback below */ }
+        feedResult = await uploadIcalFeed(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, icsText);
+        if (feedResult?.ok) icalFeedUrl = feedResult.url;
+      } catch (e) { feedResult = { ok: false, reason: `threw: ${e.message}` }; }
       try {
         await CanvasAPI.uploadIcal(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, icsText);
         [icalUrl, icalDownloadUrl] = await Promise.all([
@@ -1028,7 +1030,18 @@ export default function ClassPlannerApp() {
       setLastPublishedUrl(pageUrl);
       try { localStorage.setItem('planner-last-published-url', pageUrl); } catch {}
       setTimeout(() => setStudentEmbed(null), PUBLISH_BANNER_DISMISS_MS);
-      showToast('Published schedule to Canvas');
+      if (feedResult?.ok) {
+        showToast('Published schedule + calendar feed updated');
+      } else if (feedResult && !feedResult.ok) {
+        // Surface the actual reason so misconfigured workers / auth
+        // problems don't fail silently. The fallback Canvas link still
+        // works, just without the auto-update behavior.
+        // eslint-disable-next-line no-console
+        console.warn('[iCal feed]', feedResult);
+        showToast(`Published, but calendar feed: ${feedResult.reason}`, 'err');
+      } else {
+        showToast('Published schedule to Canvas');
+      }
     } catch (e) {
       showToast(`Publish failed: ${e.message}`, 'err');
     } finally {

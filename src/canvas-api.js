@@ -52,15 +52,18 @@ export function icalFeedUrl(baseUrl, courseId, workerBase = CORS_PROXY) {
 
 /**
  * Push the latest .ics to the worker, authenticated by the professor's
- * Canvas PAT. Returns the public feed URL on success, or null on any
- * failure — failure is non-fatal; the caller falls back to the Canvas
- * Files link.
+ * Canvas PAT. Returns a discriminated result so callers can surface
+ * the actual outcome to the user instead of silently falling back.
+ *
+ *   { ok: true, url }                 — uploaded; subscribe URL ready
+ *   { ok: false, reason, status, body }  — failed; reason is short, body is verbose
  */
 export async function uploadIcalFeed(baseUrl, token, courseId, icsText) {
-  if (!token) return null;
+  if (!token) return { ok: false, reason: 'no Canvas token in planner state' };
   const url = icalFeedUrl(baseUrl, courseId);
+  let resp;
   try {
-    const resp = await fetch(url, {
+    resp = await fetch(url, {
       method: 'PUT',
       headers: {
         'Content-Type': 'text/calendar',
@@ -68,17 +71,14 @@ export async function uploadIcalFeed(baseUrl, token, courseId, icsText) {
       },
       body: icsText,
     });
-    if (!resp.ok) {
-      // eslint-disable-next-line no-console
-      console.warn(`iCal feed upload failed: ${resp.status} ${await resp.text().catch(() => '')}`);
-      return null;
-    }
-    return url;
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('iCal feed upload error:', e.message);
-    return null;
+    return { ok: false, reason: `network error: ${e.message}` };
   }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    return { ok: false, reason: `worker returned ${resp.status}`, status: resp.status, body };
+  }
+  return { ok: true, url };
 }
 
 // ── URL rewriting ──────────────────────────────────────────────
