@@ -3,6 +3,12 @@
  */
 
 import React, { useState, useRef } from 'react';
+
+// Captured once at module load — i.e., when this page first imported the
+// Header, which is effectively the time the planner finished booting in
+// the browser. Survives HMR module replacement within a session, refreshes
+// on full page reload.
+const LOAD_TIME = new Date();
 import {
   X, Eye, EyeOff, Settings, RefreshCw,
   Upload, History, Link2, Check,
@@ -68,12 +74,18 @@ export default function Header({
                 </a>
               </div>
             )}
-            {!isStudent && (
-              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
-                <div>Build {new Date(__BUILD_TIME__).toLocaleString()}</div>
-                {state.lastSaved && <div>Saved {new Date(state.lastSaved).toLocaleString()}</div>}
-              </div>
-            )}
+            {!isStudent && (() => {
+              const lastPub = state.publishHistory?.[state.publishHistory.length - 1]?.timestamp;
+              return (
+                <div style={{ fontFamily: FONT_MONO, fontSize: '10px', color: T.muted, marginTop: 4 }}>
+                  <div>Loaded {LOAD_TIME.toLocaleString()}</div>
+                  {lastPub
+                    ? <div>Published {new Date(lastPub).toLocaleString()}</div>
+                    : <div style={{ color: T.faint }}>Not yet published</div>
+                  }
+                </div>
+              );
+            })()}
           </div>
 
           {/* Search bar (collapsible) */}

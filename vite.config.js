@@ -10,9 +10,6 @@ const CANVAS_BASE_URL = process.env.CANVAS_URL || 'https://youruniversity.instru
 export default defineConfig({
   plugins: [react()],
   base: './',
-  define: {
-    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
-  },
   server: {
     proxy: {
       '/api/v1': {
