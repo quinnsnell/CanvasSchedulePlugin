@@ -38,10 +38,30 @@ This page embeds the planner so you can edit your schedule directly inside Canva
 4. Paste:
    ```html
    <p>Use the schedule planner below to manage your course schedule. Changes save automatically in your browser.</p>
-   <iframe src="https://quinnsnell.github.io/CanvasSchedulePlugin/" style="width: 100%; height: 900px; border: none;"></iframe>
+   <iframe src="https://quinnsnell.github.io/CanvasSchedulePlugin/"
+           scrolling="no"
+           style="width: 100%; height: 5000px; border: 0; overflow: hidden"></iframe>
    ```
 5. Click **Save**
 6. **Do NOT publish this page** — it's for your use only, not for students
+
+##### A note on iframe height
+
+Canvas iframes don't auto-resize to fit their content — they use whatever
+fixed `height` you set. `5000px` is a reasonable starting point for a
+typical semester. Tune it for your course:
+
+- If you see **a scrollbar inside the iframe** (two levels of scrolling),
+  the planner is taller than the iframe — increase `height` until it fits.
+  A 16-week MWF semester can reach 6000–7000px.
+- If you see **a lot of blank space below the planner**, decrease `height`
+  to taste. Some empty space at the bottom is fine; it lives below the
+  schedule and doesn't affect the published student view.
+
+True auto-resize *is* possible, but it requires your Canvas admin to add
+a small JavaScript snippet to the institution's Theme Editor (Canvas
+strips inline `<script>` from Pages by sanitization). If you have admin
+access and want to set it up, see [`docs/canvas-theme-resize.md`](docs/canvas-theme-resize.md).
 
 #### 2. Publish the student schedule
 

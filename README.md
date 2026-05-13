@@ -86,13 +86,17 @@ pnpm build
 
 Upload `dist/` to any static host (GitHub Pages, Netlify, Vercel, your university web space). The `vite.config.js` uses `base: './'` so the build works from any path.
 
-To embed in Canvas, create a Page and add:
+To embed in Canvas, create a Page and add (HTML editor):
 
 ```html
-<iframe src="https://your-host/" width="100%" height="900" style="border:0"></iframe>
+<iframe src="https://your-host/"
+        scrolling="no"
+        style="width:100%; height:5000px; border:0; overflow:hidden"></iframe>
 ```
 
-Your Canvas admin may need to whitelist the host domain for iframe embedding.
+Canvas doesn't auto-resize iframes to fit their content, so `height` is a fixed pixel value. `5000` is a reasonable default. If you see a scrollbar inside the iframe (two levels of scrolling), bump the height up; if you see lots of blank space at the bottom, drop it down. A 16-week MWF semester typically needs 6000–7000; a short term might be fine at 3000.
+
+Your Canvas admin may need to whitelist the host domain for iframe embedding. True auto-resize is possible but requires the admin to add a parent-side JavaScript listener via the Theme Editor — see [`docs/canvas-theme-resize.md`](docs/canvas-theme-resize.md).
 
 ### CORS proxy
 
