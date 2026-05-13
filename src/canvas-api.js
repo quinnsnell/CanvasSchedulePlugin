@@ -356,12 +356,26 @@ export const CanvasAPI = {
     const files = await canvasFetch(baseUrl, token,
       `/courses/${courseId}/files?search_term=${SCHEDULE_FILENAME}&per_page=10`);
     const target = SCHEDULE_FILENAME.toLowerCase();
-    const file = files.find((f) => {
+    // Always pick the NEWEST match. uploadCourseFile tries to delete the
+    // old file before uploading, but if delete fails silently (PAT lacks
+    // delete permission, transient network) Canvas ends up with multiple
+    // schedule-planner.json files and a naïve find() will return whichever
+    // Canvas listed first — frequently the stale one.
+    const matches = files.filter((f) => {
       const dn = (f.display_name || '').toLowerCase();
       const fn = (f.filename || '').toLowerCase();
       return dn === target || fn === target;
     });
-    if (!file) return null;
+    if (matches.length === 0) return null;
+    matches.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    if (matches.length > 1) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[schedule] ${matches.length} duplicate ${SCHEDULE_FILENAME} files on Canvas — picking newest (id=${matches[0].id}, created=${matches[0].created_at}). ` +
+        `Older copies (likely orphans from failed deletes) should be removed from Canvas Files.`
+      );
+    }
+    const file = matches[0];
 
     const base = baseUrl.replace(/\/+$/, '');
     const host = new URL(base).host;
