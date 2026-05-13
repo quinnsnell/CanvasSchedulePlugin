@@ -59,6 +59,32 @@ import { DragOverlayCard } from './components/ItemCard.jsx';
 import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/panels/index.js';
 import { appStyles } from './styles.js';
 
+// ── Parent-frame course detection ───────────────────────────────
+//
+// When the planner is iframe-embedded in a Canvas page, the parent
+// URL is e.g. https://<canvas-host>/courses/<courseId>/pages/<slug>.
+// document.referrer is the parent's URL at iframe load time and is
+// cross-origin-readable (subject to the parent's referrer-policy,
+// but Canvas's default allows same-protocol referrers). Pull the
+// courseId out so each Canvas course's iframe auto-selects itself
+// — instructors paste one iframe HTML snippet everywhere without
+// per-course customization.
+//
+// An explicit ?courseId=<n> URL parameter overrides referrer detection
+// for cases where someone wants to pin the iframe to a specific course
+// regardless of where it's embedded.
+function detectParentCourseId() {
+  try {
+    const p = new URLSearchParams(window.location.search).get('courseId');
+    if (p && /^\d+$/.test(p)) return p;
+  } catch { /* ignore */ }
+  try {
+    const m = (document.referrer || '').match(/\/courses\/(\d+)(?:\/|$)/);
+    if (m) return m[1];
+  } catch { /* ignore */ }
+  return null;
+}
+
 // ── Initial state ────────────────────────────────────────────────
 
 function freshState() {
@@ -143,18 +169,29 @@ export default function ClassPlannerApp() {
   useEffect(() => {
     (async () => {
       const meta = await Store.loadMeta();
-      const courseId = meta?.courseId || '';
+      // Prefer the courseId inferred from the parent Canvas page's URL
+      // (when iframe-embedded). Falls back to whatever the user last
+      // selected in this browser via meta. Either way it's the courseId
+      // we use to look up per-course saved state.
+      const detectedCourseId = detectParentCourseId();
+      const courseId = detectedCourseId || meta?.courseId || '';
       const saved = await Store.load(courseId);
       const init = saved || freshState();
       if (!init.pendingCreations) init.pendingCreations = [];
 
-      // Restore canvas credentials from shared meta
+      // Restore canvas credentials from shared meta. courseId honors
+      // detection over meta so the iframe self-selects its host course
+      // even when meta was last saved for a different one.
       if (meta && !init.canvas.connected && meta.baseUrl && meta.token) {
         init.canvas.baseUrl = meta.baseUrl;
         init.canvas.token = meta.token;
-        init.canvas.courseId = meta.courseId || '';
+        init.canvas.courseId = courseId;
         init.canvas.courses = meta.courses || [];
         init.canvas.connected = meta.connected || false;
+      } else if (detectedCourseId) {
+        // No meta yet, but we know what course we're inside — pin it
+        // so the user only needs to enter their PAT to be ready.
+        init.canvas.courseId = detectedCourseId;
       }
 
       // Student embed: load schedule from ?src= URL parameter
@@ -192,9 +229,12 @@ export default function ClassPlannerApp() {
               startAt: c.start_at || c.term?.start_at || null,
               endAt: c.end_at || c.term?.end_at || null,
             }));
-            if (meta.courseId) {
-              s.canvas.courseId = meta.courseId;
-              const course = s.canvas.courses.find((c) => String(c.id) === String(meta.courseId));
+            // Prefer detected parent course over saved meta (same logic
+            // as initial load — keeps the auto-reconnect path in sync).
+            const targetCourseId = detectedCourseId || meta.courseId;
+            if (targetCourseId) {
+              s.canvas.courseId = targetCourseId;
+              const course = s.canvas.courses.find((c) => String(c.id) === String(targetCourseId));
               applyCourseInfo(s, course);
             }
             return s;
