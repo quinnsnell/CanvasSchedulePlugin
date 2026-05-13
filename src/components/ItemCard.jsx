@@ -287,10 +287,10 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
             {!isStudent ? (
               <input
                 type="time"
-                value={item.dueTime || ''}
+                value={item.dueTime || '23:59'}
                 onChange={(e) => onUpdate(item.id, { dueTime: e.target.value || null })}
-                aria-label="Due time (defaults to 11:59 PM)"
-                title="Due time (blank = 11:59 PM)"
+                aria-label="Due time"
+                title="Due time"
                 style={{
                   fontFamily: FONT_MONO, fontSize: '10px',
                   border: `1px solid ${T.border}`, borderRadius: 2,
@@ -298,9 +298,9 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
                   padding: '0 4px', width: 90,
                 }}
               />
-            ) : item.dueTime ? (
-              <span>at {item.dueTime}</span>
-            ) : null}
+            ) : (
+              <span>at {item.dueTime || '23:59'}</span>
+            )}
           </>
         )}
       </div>

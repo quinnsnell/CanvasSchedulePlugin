@@ -639,7 +639,7 @@ export function createCourseClone({ stateRef, updateState, showToast }) {
             }
             const id = uid();
             const due = a.due_at ? localDateStr(a.due_at) : null;
-            const dueTime = a.due_at ? (localTimeStr(a.due_at) === '23:59' ? null : localTimeStr(a.due_at)) : null;
+            const dueTime = a.due_at ? localTimeStr(a.due_at) : null;
             st.items[id] = {
               id, type: 'assign', title: a.name, points: a.points_possible || 0,
               canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime,

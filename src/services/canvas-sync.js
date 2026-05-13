@@ -29,14 +29,10 @@ export const assignmentIsQuiz = (a) =>
 
 /**
  * Pull the local time portion of a Canvas due_at and return it as
- * `HH:MM`, but only when the time differs from our implicit 23:59
- * default. Returning `null` for the default keeps the time-input
- * unobtrusive on the typical "due end of day" assignment.
+ * `HH:MM`. Returns `null` when the assignment has no due_at at all.
  */
 function dueTimeFromCanvas(due_at) {
-  if (!due_at) return null;
-  const t = localTimeStr(due_at);
-  return t === '23:59' ? null : t;
+  return due_at ? localTimeStr(due_at) : null;
 }
 
 /**
