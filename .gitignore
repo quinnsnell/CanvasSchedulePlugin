@@ -3,3 +3,4 @@ dist/
 .claude/
 .vite/
 .local/
+.wrangler/
