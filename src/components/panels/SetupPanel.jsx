@@ -424,7 +424,7 @@ export default function SetupPanel({ state, updateState, onImport, onExportTempl
                         {datesSuffix && <span> {datesSuffix}</span>}
                         {sch.mode === 'compress' && (
                           <span style={{ display: 'block', marginTop: 4, color: T.muted }}>
-                            Compressed: two source weeks of content stacked onto each target week (semester → term).
+                            Compressed: source teaching days mapped linearly across the shorter term (semester → term).
                           </span>
                         )}
                         {sch.mode === 'expand' && (

@@ -13,10 +13,15 @@
  *   - Same week count, target has FEWER days/week (MWF → TR, MW → M):
  *     items past the target week's last position stack onto the LAST
  *     teaching day of that week. Nothing within the semester is dropped.
- *   - Source has ~2x the weeks of target (semester → term): each pair
- *     of source weeks collapses onto one target week. Day-position is
- *     preserved within each target week, so two source Mondays stack
- *     on one target Monday, etc. ("compress" mode)
+ *   - Source has substantially more weeks than target (semester → term):
+ *     SOURCE TEACHING DAYS spread linearly across TARGET TEACHING DAYS.
+ *     The Nth source day lands on floor(N * targetDays / sourceDays).
+ *     For TR → TR with a 2:1 ratio (28 source days → 14 target days),
+ *     that pairs source wk1 Tue+Thu onto target wk1 Tue, source wk2
+ *     Tue+Thu onto target wk1 Thu, source wk3 Tue+Thu onto target wk2
+ *     Tue, etc. — "two days in one day, two weeks in one week" per the
+ *     instructor's mental model. For MWF → MWF it pairs adjacent source
+ *     teaching days the same way. ("compress")
  *   - Source has ~half the weeks of target (term → semester): each
  *     source week maps to the first of a pair of target weeks; the
  *     second week of each pair is left blank for the instructor to
@@ -148,18 +153,19 @@ export function exportTemplate(state) {
 
 /**
  * Pick a mapping mode based on the target/source week ratio:
- *   - ratio ≈ 0.5 (e.g., 14-week semester → 7-week term): "compress"
- *   - ratio ≈ 2.0 (term → semester): "expand"
+ *   - ratio < ~0.7 (substantial compression, e.g. 14-week semester →
+ *     7-week term, or even 14 → 10): "compress"
+ *   - ratio > ~1.5 (substantial expansion, term → semester): "expand"
  *   - otherwise: "literal" (existing 1:1 mapping)
- *
- * Tolerant bands so 13/7 and 15/7 still count as compression and the
- * usual ±1 week of variance in semester length doesn't trip us up.
  */
 function pickMode(sourceWeeks, targetWeeks) {
   if (!sourceWeeks || !targetWeeks) return 'literal';
   const ratio = targetWeeks / sourceWeeks;
-  if (ratio >= 0.4 && ratio <= 0.65) return 'compress';
-  if (ratio >= 1.7 && ratio <= 2.5) return 'expand';
+  // 0.65 picks up the typical half-term cases (14 → 7, 14 → 9, 15 → 8)
+  // but leaves merely-shorter-than scenarios (14 → 10, 3 → 2) in literal
+  // mode, where trailing weeks drop as before.
+  if (ratio < 0.65) return 'compress';
+  if (ratio > 1.55) return 'expand';
   return 'literal';
 }
 
@@ -197,15 +203,11 @@ export function importTemplate(template, setup, options = {}) {
 
   const mode = options.mode || pickMode(sourceWeeks, targetWeeks);
 
-  // Re-map a source weekIndex into the target's week space according to
-  // the selected mode. Returns null if the mapping has nowhere to land
-  // (e.g., a source week past the end of the target after expansion).
-  const mapWeek = (srcWeek) => {
-    if (srcWeek == null) return null;
-    if (mode === 'compress') return Math.floor(srcWeek / 2);
-    if (mode === 'expand') return srcWeek * 2;
-    return srcWeek;
-  };
+  // Source total teaching days — used by compress mode to spread source
+  // days evenly across target days. We trust `template.totalTeachingDays`
+  // when present; fall back to the highest `slot.index` + 1.
+  const sourceDays = template.totalTeachingDays ??
+    (template.slots.reduce((m, s) => Math.max(m, s.index ?? -1), -1) + 1);
 
   const items = {};
   const schedule = {};
@@ -215,11 +217,31 @@ export function importTemplate(template, setup, options = {}) {
   const extraDays = [];
   let droppedExtras = 0;
 
-  template.slots.forEach((slot) => {
+  // In compress mode process slots in source order so source week 1's
+  // content lands on target day 0 BEFORE source week 2's content. The
+  // slots array is already in teaching-day order from exportTemplate,
+  // but sort defensively in case a legacy or hand-edited template
+  // arrives out of order.
+  const orderedSlots = mode === 'compress'
+    ? [...template.slots].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    : template.slots;
+
+  orderedSlots.forEach((slot) => {
     let date;
-    if (slot.weekIndex != null && slot.weekPosition != null) {
-      // Week+position mapping (current default).
-      const mappedWeek = mapWeek(slot.weekIndex);
+    if (mode === 'compress' && slot.index != null && sourceDays > 0 && newTeachingDays.length > 0) {
+      // Linear day-by-day compression. The Nth source teaching day lands
+      // on target day floor(N * targetDays / sourceDays). For a 2:1
+      // semester→term (TR→TR, 28 src days → 14 tgt days), that's pairs:
+      // source wk1 Tue+Thu → target wk1 Tue, source wk2 Tue+Thu → target
+      // wk1 Thu, etc. For MWF→MWF half-term it pairs adjacent source
+      // teaching days similarly. Source surplus (if any) clamps to the
+      // last target day rather than getting dropped.
+      const rawIdx = Math.floor((slot.index * newTeachingDays.length) / sourceDays);
+      const targetDayIdx = Math.min(rawIdx, newTeachingDays.length - 1);
+      date = newTeachingDays[targetDayIdx];
+    } else if (slot.weekIndex != null && slot.weekPosition != null) {
+      // Week+position mapping (literal mode, or expand mode below).
+      const mappedWeek = mode === 'expand' ? slot.weekIndex * 2 : slot.weekIndex;
       if (mappedWeek > lastTargetWeek) {
         droppedExtras += 1;
         return;
@@ -232,15 +254,11 @@ export function importTemplate(template, setup, options = {}) {
       }
       // Compression: clamp to last target position so we never lose items
       // within the semester. MWF → TR sees 3rd-day items stack on Thu;
-      // MWF → M sees Wed and Fri items stack on Mon. Same clamp applies
-      // in compress/expand modes — it operates within a single target
-      // week regardless of how source weeks got there.
+      // MWF → M sees Wed and Fri items stack on Mon.
       const targetPos = Math.min(slot.weekPosition, daysInTargetWeek.length - 1);
       date = daysInTargetWeek[targetPos];
     } else {
       // Legacy index-based fallback for templates exported pre-week-mapping.
-      // Compression/expansion don't apply to the legacy fallback — those
-      // require weekIndex/weekPosition to be meaningful.
       if (slot.index >= newTeachingDays.length) {
         droppedExtras += 1;
         return;

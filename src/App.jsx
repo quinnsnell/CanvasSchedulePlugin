@@ -769,7 +769,7 @@ export default function ClassPlannerApp() {
         const itemCount = Object.keys(result.items).length;
         const extraNote = result.extraDays?.length ? `, +${result.extraDays.length} extra day${result.extraDays.length === 1 ? '' : 's'}` : '';
         const modeNote = result.mode === 'compress'
-          ? ' (compressed 2 source weeks per target week)'
+          ? ' (compressed: source teaching days mapped linearly across the shorter term)'
           : result.mode === 'expand'
             ? ' (expanded — alternating target weeks left blank)'
             : '';

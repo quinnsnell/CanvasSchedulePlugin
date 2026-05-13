@@ -791,8 +791,10 @@ describe('exportTemplate + importTemplate (cross-pattern remap)', () => {
     expect(t['2026-09-04']).toEqual(['F']);
   });
 
-  it('source longer than target: extra weeks dropped (counted)', () => {
-    // 3-week source, 1-week target.
+  it('source much longer than target: auto-compress stacks rather than drops', () => {
+    // 3-week source, 1-week target. Ratio 1/3 ≈ 0.33 → compress mode.
+    // All three source weeks stack onto the one target day rather than
+    // dropping the last two.
     const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-23', classDays: ['MO'] };
     const source = buildState(sourceSetup, {
       '2026-01-05': ['Wk1'],
@@ -804,8 +806,30 @@ describe('exportTemplate + importTemplate (cross-pattern remap)', () => {
     const result = importTemplate(template, target);
     const t = titlesByDate(result);
 
+    expect(result.mode).toBe('compress');
+    expect(t['2026-08-24']).toEqual(['Wk1', 'Wk2', 'Wk3']);
+    expect(result.droppedExtras).toBe(0);
+  });
+
+  it('source longer than target by a small margin: literal mode truncates', () => {
+    // 3-week source, 2-week target. Ratio 2/3 ≈ 0.67 → still literal.
+    // Within the literal band, trailing source weeks beyond the target
+    // end get dropped (counted in droppedExtras).
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-01-23', classDays: ['MO'] };
+    const source = buildState(sourceSetup, {
+      '2026-01-05': ['Wk1'],
+      '2026-01-12': ['Wk2'],
+      '2026-01-19': ['Wk3'],
+    });
+    const template = exportTemplate(source);
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-09-04', classDays: ['MO'] };
+    const result = importTemplate(template, target);
+    const t = titlesByDate(result);
+
+    expect(result.mode).toBe('literal');
     expect(t['2026-08-24']).toEqual(['Wk1']);
-    expect(result.droppedExtras).toBe(2); // Wk2 + Wk3
+    expect(t['2026-08-31']).toEqual(['Wk2']);
+    expect(result.droppedExtras).toBe(1);
   });
 
   it('legacy template (no weekIndex/weekPosition) falls back to index-based placement', () => {
@@ -894,22 +918,21 @@ describe('importTemplate (semester ↔ term)', () => {
     return out;
   };
 
-  it('14-week → 7-week MWF: compresses 2:1 with two source weeks stacked per target week', () => {
-    // 14-week MWF source. Title each session "Wk<N>-<DOW>".
-    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-04-10', classDays: ['MO', 'WE', 'FR'] };
+  it('14-week TR → 7-week TR: one source week per target day', () => {
+    // 14-week TR source. 28 source teaching days.
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-06', endDate: '2026-04-09', classDays: ['TU', 'TH'] };
     const weekItems = {};
-    const start = new Date('2026-01-05T12:00:00');
+    const start = new Date('2026-01-06T12:00:00');  // a Tuesday
     for (let w = 0; w < 14; w++) {
-      ['MO', 'WE', 'FR'].forEach((dow, i) => {
-        const d = new Date(start.getTime() + (w * 7 + [0, 2, 4][i]) * 86400000);
-        const key = d.toISOString().slice(0, 10);
-        weekItems[key] = [`Wk${w + 1}-${dow}`];
+      ['TU', 'TH'].forEach((dow, i) => {
+        const d = new Date(start.getTime() + (w * 7 + [0, 2][i]) * 86400000);
+        weekItems[d.toISOString().slice(0, 10)] = [`Wk${w + 1}-${dow}`];
       });
     }
     const template = exportTemplate(buildState(sourceSetup, weekItems));
 
-    // 7-week MWF target.
-    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-10-09', classDays: ['MO', 'WE', 'FR'] };
+    // 7-week TR target — 14 target teaching days, perfect 2:1 fit.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-25', endDate: '2026-10-08', classDays: ['TU', 'TH'] };
     const result = importTemplate(template, target);
 
     expect(result.mode).toBe('compress');
@@ -917,17 +940,19 @@ describe('importTemplate (semester ↔ term)', () => {
 
     const t = titlesByDate(result);
 
-    // Target week 0 Mon ← source weeks 1 Mon and 2 Mon.
-    expect(t['2026-08-24']).toEqual(['Wk1-MO', 'Wk2-MO']);
-    expect(t['2026-08-26']).toEqual(['Wk1-WE', 'Wk2-WE']);
-    expect(t['2026-08-28']).toEqual(['Wk1-FR', 'Wk2-FR']);
+    // Source week 1's Tue+Thu → target wk1 Tue (Aug 25).
+    // Source week 2's Tue+Thu → target wk1 Thu (Aug 27).
+    expect(t['2026-08-25']).toEqual(['Wk1-TU', 'Wk1-TH']);
+    expect(t['2026-08-27']).toEqual(['Wk2-TU', 'Wk2-TH']);
+    expect(t['2026-09-01']).toEqual(['Wk3-TU', 'Wk3-TH']);
+    expect(t['2026-09-03']).toEqual(['Wk4-TU', 'Wk4-TH']);
 
-    // Target week 6 (last) Mon ← source weeks 13, 14 Mon.
-    expect(t['2026-10-05']).toEqual(['Wk13-MO', 'Wk14-MO']);
-    expect(t['2026-10-09']).toEqual(['Wk13-FR', 'Wk14-FR']);
+    // Last target day (Thu Oct 8) gets the 14th source week.
+    expect(t['2026-10-08']).toEqual(['Wk14-TU', 'Wk14-TH']);
   });
 
-  it('14-week MWF → 7-week TR: compression + day-position compression both apply', () => {
+  it('14-week MWF → 7-week MWF: pairs of consecutive source days per target day', () => {
+    // 14-week MWF source (42 source teaching days).
     const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-04-10', classDays: ['MO', 'WE', 'FR'] };
     const weekItems = {};
     const start = new Date('2026-01-05T12:00:00');
@@ -939,18 +964,45 @@ describe('importTemplate (semester ↔ term)', () => {
     }
     const template = exportTemplate(buildState(sourceSetup, weekItems));
 
-    // 7-week TR target.
-    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-10-09', classDays: ['TU', 'TH'] };
+    // 7-week MWF target — 21 target teaching days. 42/21 = 2 source days per target day.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-24', endDate: '2026-10-09', classDays: ['MO', 'WE', 'FR'] };
+    const result = importTemplate(template, target);
+
+    expect(result.mode).toBe('compress');
+    expect(result.droppedExtras).toBe(0);
+
+    const t = titlesByDate(result);
+    // Aug 24 (tgt day 0) gets src days 0+1: wk1 Mon + wk1 Wed.
+    expect(t['2026-08-24']).toEqual(['Wk1-MO', 'Wk1-WE']);
+    // Aug 26 (tgt day 1) gets src days 2+3: wk1 Fri + wk2 Mon.
+    expect(t['2026-08-26']).toEqual(['Wk1-FR', 'Wk2-MO']);
+    // Aug 28 (tgt day 2) gets src days 4+5: wk2 Wed + wk2 Fri.
+    expect(t['2026-08-28']).toEqual(['Wk2-WE', 'Wk2-FR']);
+  });
+
+  it('14-week MWF → 7-week TR: 42 source days into 14 target days, three src per tgt', () => {
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-05', endDate: '2026-04-10', classDays: ['MO', 'WE', 'FR'] };
+    const weekItems = {};
+    const start = new Date('2026-01-05T12:00:00');
+    for (let w = 0; w < 14; w++) {
+      ['MO', 'WE', 'FR'].forEach((dow, i) => {
+        const d = new Date(start.getTime() + (w * 7 + [0, 2, 4][i]) * 86400000);
+        weekItems[d.toISOString().slice(0, 10)] = [`Wk${w + 1}-${dow}`];
+      });
+    }
+    const template = exportTemplate(buildState(sourceSetup, weekItems));
+
+    // 7-week TR target — 14 target teaching days. 42/14 = 3 source days per target day.
+    const target = { courseTitle: 'tgt', startDate: '2026-08-25', endDate: '2026-10-08', classDays: ['TU', 'TH'] };
     const result = importTemplate(template, target);
 
     expect(result.mode).toBe('compress');
 
     const t = titlesByDate(result);
-    // Target week 0: Tue Aug 25, Thu Aug 27.
-    // Source Mon stays at pos 0 (Tue), Wed and Fri both clamp to last
-    // pos (Thu). Both source weeks 1 and 2 collapse into target week 0.
-    expect(t['2026-08-25']).toEqual(['Wk1-MO', 'Wk2-MO']);
-    expect(t['2026-08-27']).toEqual(['Wk1-WE', 'Wk1-FR', 'Wk2-WE', 'Wk2-FR']);
+    // Tgt day 0 (Aug 25, Tue) ← src days 0,1,2 = wk1 M+W+F.
+    expect(t['2026-08-25']).toEqual(['Wk1-MO', 'Wk1-WE', 'Wk1-FR']);
+    // Tgt day 1 (Aug 27, Thu) ← src days 3,4,5 = wk2 M+W+F.
+    expect(t['2026-08-27']).toEqual(['Wk2-MO', 'Wk2-WE', 'Wk2-FR']);
   });
 
   it('7-week → 14-week MWF: expands 1:2, alternating weeks blank', () => {
@@ -998,6 +1050,35 @@ describe('importTemplate (semester ↔ term)', () => {
 
     expect(result.mode).toBe('literal');
     expect(result.droppedExtras).toBe(7); // weeks 8..14 dropped in literal mode
+  });
+
+  it('compress mode preserves source-week ordering with surplus stacked on last day', () => {
+    // 5-week TR source, 2-week TR target. 10 source days, 4 target days.
+    // floor(idx * 4 / 10): 0→0, 1→0, 2→0, 3→1, 4→1, 5→2, 6→2, 7→2, 8→3, 9→3.
+    // So the 9th and 10th source days end up on the last target day (no
+    // dropping). Surplus stacking matches the existing "never lose items"
+    // promise of the literal day-position compression.
+    const sourceSetup = { courseTitle: 'src', startDate: '2026-01-06', endDate: '2026-02-05', classDays: ['TU', 'TH'] };
+    const weekItems = {};
+    const start = new Date('2026-01-06T12:00:00');
+    for (let w = 0; w < 5; w++) {
+      ['TU', 'TH'].forEach((dow, i) => {
+        const d = new Date(start.getTime() + (w * 7 + [0, 2][i]) * 86400000);
+        weekItems[d.toISOString().slice(0, 10)] = [`Wk${w + 1}-${dow}`];
+      });
+    }
+    const template = exportTemplate(buildState(sourceSetup, weekItems));
+
+    const target = { courseTitle: 'tgt', startDate: '2026-08-25', endDate: '2026-09-03', classDays: ['TU', 'TH'] };
+    const result = importTemplate(template, target);
+
+    expect(result.mode).toBe('compress');
+    expect(result.droppedExtras).toBe(0);
+    const t = titlesByDate(result);
+    expect(t['2026-08-25']).toEqual(['Wk1-TU', 'Wk1-TH', 'Wk2-TU']);
+    expect(t['2026-08-27']).toEqual(['Wk2-TH', 'Wk3-TU']);
+    expect(t['2026-09-01']).toEqual(['Wk3-TH', 'Wk4-TU', 'Wk4-TH']);
+    expect(t['2026-09-03']).toEqual(['Wk5-TU', 'Wk5-TH']);
   });
 
   it('exportTemplate emits totalWeeks based on max weekIndex', () => {
