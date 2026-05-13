@@ -96,7 +96,7 @@ To embed in Canvas, create a Page and add (HTML editor):
 
 Canvas doesn't auto-resize iframes to fit their content, so `height` is a fixed pixel value. `5000` is a reasonable default. If you see a scrollbar inside the iframe (two levels of scrolling), bump the height up; if you see lots of blank space at the bottom, drop it down. A 16-week MWF semester typically needs 6000–7000; a short term might be fine at 3000.
 
-Your Canvas admin may need to whitelist the host domain for iframe embedding. True auto-resize is possible but requires the admin to add a parent-side JavaScript listener via the Theme Editor — see [`docs/canvas-theme-resize.md`](docs/canvas-theme-resize.md).
+Your Canvas admin may need to whitelist the host domain for iframe embedding. Canvas strips inline `<script>` from Pages, so there's no in-page way to auto-resize the iframe to its content — tune the fixed `height` instead.
 
 ### CORS proxy
 

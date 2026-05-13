@@ -58,10 +58,10 @@ typical semester. Tune it for your course:
   to taste. Some empty space at the bottom is fine; it lives below the
   schedule and doesn't affect the published student view.
 
-True auto-resize *is* possible, but it requires your Canvas admin to add
-a small JavaScript snippet to the institution's Theme Editor (Canvas
-strips inline `<script>` from Pages by sanitization). If you have admin
-access and want to set it up, see [`docs/canvas-theme-resize.md`](docs/canvas-theme-resize.md).
+Canvas doesn't auto-resize iframes to fit their content, and the obvious
+workaround (a `<script>` next to the iframe that listens for size
+messages) doesn't work because Canvas strips inline `<script>` from
+Pages on save. Tuning a fixed height is the practical approach.
 
 #### 2. Publish the student schedule
 
