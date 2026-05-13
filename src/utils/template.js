@@ -13,8 +13,16 @@
  *   - Same week count, target has FEWER days/week (MWF → TR, MW → M):
  *     items past the target week's last position stack onto the LAST
  *     teaching day of that week. Nothing within the semester is dropped.
- *   - Source has MORE weeks than target: trailing weeks are dropped
- *     (counted in droppedExtras).
+ *   - Source has ~2x the weeks of target (semester → term): each pair
+ *     of source weeks collapses onto one target week. Day-position is
+ *     preserved within each target week, so two source Mondays stack
+ *     on one target Monday, etc. ("compress" mode)
+ *   - Source has ~half the weeks of target (term → semester): each
+ *     source week maps to the first of a pair of target weeks; the
+ *     second week of each pair is left blank for the instructor to
+ *     fill in. ("expand" mode)
+ *   - Otherwise, source weeks past the target's last week are dropped
+ *     (counted in droppedExtras). ("literal" mode)
  *
  * Used by the Course Setup panel's "Export/Import template" buttons and
  * by the course-clone import path (services/course-clone.js).
@@ -118,12 +126,20 @@ export function exportTemplate(state) {
 
   const unscheduledItems = unscheduledArr.map(stripItem).filter(Boolean);
 
+  // Total source weeks — needed by importTemplate to choose between
+  // literal/compress/expand modes. Derived from the slots' max weekIndex
+  // rather than (endDate - startDate)/7 so it matches the weeks actually
+  // populated with content.
+  const maxWeek = slots.reduce((m, s) => Math.max(m, s.weekIndex ?? -1), -1);
+  const totalWeeks = maxWeek + 1;
+
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
     courseTitle: state.setup.courseTitle || '',
     classDays: state.setup.classDays,
     totalTeachingDays: teachingDays.length,
+    totalWeeks,
     slots,
     extraSlots,
     unscheduledItems,
@@ -131,16 +147,33 @@ export function exportTemplate(state) {
 }
 
 /**
+ * Pick a mapping mode based on the target/source week ratio:
+ *   - ratio ≈ 0.5 (e.g., 14-week semester → 7-week term): "compress"
+ *   - ratio ≈ 2.0 (term → semester): "expand"
+ *   - otherwise: "literal" (existing 1:1 mapping)
+ *
+ * Tolerant bands so 13/7 and 15/7 still count as compression and the
+ * usual ±1 week of variance in semester length doesn't trip us up.
+ */
+function pickMode(sourceWeeks, targetWeeks) {
+  if (!sourceWeeks || !targetWeeks) return 'literal';
+  const ratio = targetWeeks / sourceWeeks;
+  if (ratio >= 0.4 && ratio <= 0.65) return 'compress';
+  if (ratio >= 1.7 && ratio <= 2.5) return 'expand';
+  return 'literal';
+}
+
+/**
  * Map a template onto a new semester's setup. Items get fresh IDs.
  * Returns a partial state update: { items, schedule, holidays, modules,
- * unscheduled, extraDays, droppedExtras }. The caller is responsible for
- * merging into application state.
+ * unscheduled, extraDays, droppedExtras, mode }. The caller is responsible
+ * for merging into application state; `mode` is informational (so UI can
+ * tell the instructor "compressed two weeks per week", etc.).
  *
- * Placement is week+position when the template has those fields (any
- * template exported by the current code does); falls back to the old
- * teaching-day-index for legacy saved templates.
+ * `options.mode` overrides auto-detection. Useful for tests and for a
+ * future "force literal" UI option.
  */
-export function importTemplate(template, setup) {
+export function importTemplate(template, setup, options = {}) {
   const newTeachingDays = generateClassDays(setup.startDate, setup.endDate, setup.classDays);
   const teachingSet = new Set(newTeachingDays);
   const lastTeachingDate = newTeachingDays[newTeachingDays.length - 1];
@@ -157,6 +190,22 @@ export function importTemplate(template, setup) {
   const lastTargetWeek = Object.keys(targetDaysByWeek).reduce(
     (max, k) => Math.max(max, Number(k)), -1
   );
+  const targetWeeks = lastTargetWeek + 1;
+  const sourceWeeks =
+    template.totalWeeks ??
+    template.slots.reduce((m, s) => Math.max(m, (s.weekIndex ?? -1)), -1) + 1;
+
+  const mode = options.mode || pickMode(sourceWeeks, targetWeeks);
+
+  // Re-map a source weekIndex into the target's week space according to
+  // the selected mode. Returns null if the mapping has nowhere to land
+  // (e.g., a source week past the end of the target after expansion).
+  const mapWeek = (srcWeek) => {
+    if (srcWeek == null) return null;
+    if (mode === 'compress') return Math.floor(srcWeek / 2);
+    if (mode === 'expand') return srcWeek * 2;
+    return srcWeek;
+  };
 
   const items = {};
   const schedule = {};
@@ -170,11 +219,12 @@ export function importTemplate(template, setup) {
     let date;
     if (slot.weekIndex != null && slot.weekPosition != null) {
       // Week+position mapping (current default).
-      if (slot.weekIndex > lastTargetWeek) {
+      const mappedWeek = mapWeek(slot.weekIndex);
+      if (mappedWeek > lastTargetWeek) {
         droppedExtras += 1;
         return;
       }
-      const daysInTargetWeek = targetDaysByWeek[slot.weekIndex] || [];
+      const daysInTargetWeek = targetDaysByWeek[mappedWeek] || [];
       if (daysInTargetWeek.length === 0) {
         // The week exists in the target's calendar but has no class meetings.
         droppedExtras += 1;
@@ -182,11 +232,15 @@ export function importTemplate(template, setup) {
       }
       // Compression: clamp to last target position so we never lose items
       // within the semester. MWF → TR sees 3rd-day items stack on Thu;
-      // MWF → M sees Wed and Fri items stack on Mon.
+      // MWF → M sees Wed and Fri items stack on Mon. Same clamp applies
+      // in compress/expand modes — it operates within a single target
+      // week regardless of how source weeks got there.
       const targetPos = Math.min(slot.weekPosition, daysInTargetWeek.length - 1);
       date = daysInTargetWeek[targetPos];
     } else {
       // Legacy index-based fallback for templates exported pre-week-mapping.
+      // Compression/expansion don't apply to the legacy fallback — those
+      // require weekIndex/weekPosition to be meaningful.
       if (slot.index >= newTeachingDays.length) {
         droppedExtras += 1;
         return;
@@ -209,6 +263,13 @@ export function importTemplate(template, setup) {
   // Items land on the resulting calendar date even if it isn't a teaching day —
   // that's the whole point of an extra day. Skip if the offset lands outside
   // the new semester window.
+  //
+  // Note: when compressing/expanding we keep the raw day-offset rather than
+  // halving/doubling it. Extra days are typically tied to a real calendar
+  // event (guest lecture on a specific Friday, etc.), and a remapping that
+  // moves them to a different real date is more confusing than helpful.
+  // The window check below will quietly drop ones that fall outside the
+  // shorter target term — counted in droppedExtras.
   (template.extraSlots || []).forEach((slot) => {
     const date = addDays(setup.startDate, slot.daysFromStart);
     if (date < setup.startDate || date > semesterEndStr) {
@@ -235,5 +296,5 @@ export function importTemplate(template, setup) {
     unscheduled.push(id);
   });
 
-  return { items, schedule, holidays, modules, unscheduled, extraDays, droppedExtras };
+  return { items, schedule, holidays, modules, unscheduled, extraDays, droppedExtras, mode };
 }

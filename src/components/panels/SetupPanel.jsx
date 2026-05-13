@@ -401,7 +401,10 @@ export default function SetupPanel({ state, updateState, onImport, onExportTempl
                         </span>
                       );
                     }
-                    const truncated = sch.sourceTotalDays > sch.mappedDays;
+                    // In compress/expand mode the day-count comparison is
+                    // meaningless (a 14-week → 7-week copy expects fewer
+                    // target days), so we only flag truncation in literal mode.
+                    const truncated = sch.mode === 'literal' && sch.sourceTotalDays > sch.mappedDays;
                     const extraSuffix = sch.extraDays
                       ? ` plus ${sch.extraDays} extra day${sch.extraDays === 1 ? '' : 's'}`
                       : '';
@@ -419,6 +422,16 @@ export default function SetupPanel({ state, updateState, onImport, onExportTempl
                         {' '}({sch.relinked} assignment{sch.relinked === 1 ? '' : 's'} re-linked to the new course).
                         {rewriteSuffix && <span> {rewriteSuffix}</span>}
                         {datesSuffix && <span> {datesSuffix}</span>}
+                        {sch.mode === 'compress' && (
+                          <span style={{ display: 'block', marginTop: 4, color: T.muted }}>
+                            Compressed: two source weeks of content stacked onto each target week (semester → term).
+                          </span>
+                        )}
+                        {sch.mode === 'expand' && (
+                          <span style={{ display: 'block', marginTop: 4, color: T.muted }}>
+                            Expanded: each source week mapped to the first of a pair of target weeks; alternating weeks are blank.
+                          </span>
+                        )}
                         {canvasLine && <span style={{ display: 'block', marginTop: 4 }}>{canvasLine}</span>}
                         {canvasErrorLine && <span style={{ display: 'block', marginTop: 4, color: T.ox }}>{canvasErrorLine}</span>}
                         {truncated && (

@@ -748,7 +748,9 @@ export default function ClassPlannerApp() {
         const result = importTemplate(template, state.setup);
         const newTeachingDays = generateClassDays(state.setup.startDate, state.setup.endDate, state.setup.classDays);
         const mapped = Math.min(template.totalTeachingDays, newTeachingDays.length);
-        if (template.totalTeachingDays > newTeachingDays.length) {
+        // Compress/expand mode already accounts for the week-count mismatch;
+        // only warn when literal mode would drop trailing weeks.
+        if (result.mode === 'literal' && template.totalTeachingDays > newTeachingDays.length) {
           showToast(`Template has ${template.totalTeachingDays} days but new semester has ${newTeachingDays.length} — some items may be lost`, 'err');
         }
         updateState((s) => {
@@ -766,7 +768,12 @@ export default function ClassPlannerApp() {
         });
         const itemCount = Object.keys(result.items).length;
         const extraNote = result.extraDays?.length ? `, +${result.extraDays.length} extra day${result.extraDays.length === 1 ? '' : 's'}` : '';
-        showToast(`Imported template: ${itemCount} items across ${mapped} days${extraNote}`);
+        const modeNote = result.mode === 'compress'
+          ? ' (compressed 2 source weeks per target week)'
+          : result.mode === 'expand'
+            ? ' (expanded — alternating target weeks left blank)'
+            : '';
+        showToast(`Imported template: ${itemCount} items across ${mapped} days${extraNote}${modeNote}`);
       } catch (err) {
         showToast(`Failed to import template: ${err.message}`, 'err');
       }

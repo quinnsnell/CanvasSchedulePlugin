@@ -428,6 +428,7 @@ export function createCourseClone({ stateRef, updateState, showToast }) {
       mappedDays: Math.min(template.totalTeachingDays, newTeachingDays.length),
       sourceTotalDays: template.totalTeachingDays,
       droppedExtras: result.droppedExtras || 0,
+      mode: result.mode || 'literal',
       datePushed,
       datePushFailed: datePushFailures.length,
       warnings,
