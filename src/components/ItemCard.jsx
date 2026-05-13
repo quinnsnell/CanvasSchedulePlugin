@@ -15,7 +15,6 @@ import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
 import { fmtMonthDay } from '../utils.js';
 import { pillStyle, iconBtnStyle } from './ui.jsx';
 import RichEditor from './RichEditor.jsx';
-import { useSelection } from './SelectionContext.jsx';
 
 // ── Item Card ──────────────────────────────────────────────────
 
@@ -30,8 +29,6 @@ export default function ItemCard({
   const isRich = item.type === 'rich';
   const [editing, setEditing] = useState(false);
   const [titleEditing, setTitleEditing] = useState(false);
-  const { selectedIds, toggle: toggleSelect, isSelectable } = useSelection();
-  const isSelected = selectedIds.has(item.id);
 
   // Auto-open editor when a new note is created
   useEffect(() => {
@@ -61,14 +58,18 @@ export default function ItemCard({
   const isDragging = isSortableDragging || draggingId === item.id;
 
   const style = {
-    background: isSelected ? T.inkBlueSoft : T.paper,
-    border: `1px solid ${isSelected ? T.inkBlue : T.border}`,
+    background: T.paper,
+    // Per-side border so React doesn't whine about mixing the `border`
+    // shorthand with `borderLeft` when other props change during render.
+    borderTop: `1px solid ${T.border}`,
+    borderRight: `1px solid ${T.border}`,
+    borderBottom: `1px solid ${T.border}`,
     borderLeft: `3px solid ${accent}`,
     borderRadius: 3,
     padding: '10px 12px',
     display: 'flex', gap: 8, alignItems: 'flex-start',
     cursor: canDrag ? 'grab' : 'default',
-    transition: transition || 'opacity 120ms, background 120ms',
+    transition: transition || 'opacity 120ms',
     minWidth: 0,
     transform: CSS.Transform.toString(transform),
     opacity: isDragging ? 0.4 : 1,
@@ -81,20 +82,9 @@ export default function ItemCard({
       style={style}
       {...attributes}
     >
-      {/* Reorder grip + arrow buttons + bulk-select checkbox */}
+      {/* Reorder grip + arrow buttons */}
       {!isStudent && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, flexShrink: 0, paddingTop: 2 }}>
-          {isSelectable && (
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleSelect(item.id)}
-              aria-label={`Select ${item.title || (isAssign ? 'assignment' : 'note')}`}
-              style={{ marginBottom: 2, cursor: 'pointer' }}
-              // Stop the click from initiating a drag.
-              onPointerDown={(e) => e.stopPropagation()}
-            />
-          )}
           {onMoveUp && (
             <button className="kb-move-btn" onClick={onMoveUp} aria-label="Move item up">
               <ChevronUp size={12} />
@@ -174,7 +164,9 @@ export function DragOverlayCard({ item }) {
       className="planner-card"
       style={{
         background: T.paper,
-        border: `1px solid ${T.border}`,
+        borderTop: `1px solid ${T.border}`,
+        borderRight: `1px solid ${T.border}`,
+        borderBottom: `1px solid ${T.border}`,
         borderLeft: `3px solid ${accent}`,
         borderRadius: 3,
         padding: '10px 12px',
