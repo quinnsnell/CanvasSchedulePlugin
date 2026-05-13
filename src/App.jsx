@@ -56,6 +56,7 @@ import BulkActionBar from './components/BulkActionBar.jsx';
 import UnpublishedBadge from './components/UnpublishedBadge.jsx';
 import { PublishBanner, ActivityLog } from './components/PublishBanner.jsx';
 import UnscheduledZone from './components/UnscheduledZone.jsx';
+import ModuleSidebar from './components/ModuleSidebar.jsx';
 import { DragOverlayCard } from './components/ItemCard.jsx';
 import { SetupPanel, ShiftModal, ConflictModal, RecurringModal, EmptyState } from './components/panels/index.js';
 import { appStyles } from './styles.js';
@@ -333,6 +334,39 @@ export default function ClassPlannerApp() {
 
     const activeId = active.id;
     const overId = over.id;
+
+    // Module pill drag (id prefix `module:<canvasId>`). Place a marker
+    // on the target date; the existing string-vs-object handling in
+    // `moduleTitle()` treats this as Canvas-sourced.
+    if (typeof activeId === 'string' && activeId.startsWith('module:')) {
+      const moduleData = active.data?.current;
+      let targetDate = null;
+      if (over.data?.current?.type === 'day') {
+        targetDate = over.data.current.date;
+      } else if (typeof overId === 'string' && overId.startsWith('day:')) {
+        targetDate = overId.slice(4);
+      }
+      if (!targetDate || !moduleData) return;
+      setState((prev) => {
+        const next = structuredClone(prev);
+        if (!next.modules) next.modules = {};
+        // Drop any prior placement of this same Canvas module so it
+        // can only appear in one place at a time.
+        Object.keys(next.modules).forEach((d) => {
+          const v = next.modules[d];
+          if (v && typeof v === 'object' && v.canvasModuleId === moduleData.moduleId) {
+            delete next.modules[d];
+          }
+        });
+        next.modules[targetDate] = {
+          title: moduleData.moduleName,
+          canvasModuleId: moduleData.moduleId,
+        };
+        return next;
+      });
+      return;
+    }
+
     const sourceContainer = findItemContainer(activeId);
     if (sourceContainer === null) return;
 
@@ -1127,6 +1161,10 @@ export default function ClassPlannerApp() {
 
   const isStudent = state.studentView;
   const activeDragItem = draggingId ? state.items[draggingId] : null;
+  // For module-pill drags, look up the name to render in the overlay.
+  const activeDragModule = (typeof draggingId === 'string' && draggingId.startsWith('module:'))
+    ? (state.canvas?.modules || []).find((m) => `module:${m.id}` === draggingId)
+    : null;
 
   return (
     <DndContext
@@ -1251,18 +1289,27 @@ export default function ClassPlannerApp() {
         </section>
 
         {!isStudent && (
-          <aside>
-            <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.2em', textTransform: 'uppercase', color: T.muted, marginBottom: 8 }}>
-              Unscheduled
+          <aside style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {(state.canvas?.modules || []).length > 0 && (
+              <ModuleSidebar
+                modules={state.canvas.modules}
+                placedModules={state.modules || {}}
+                isStudent={isStudent}
+              />
+            )}
+            <div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: '10px', letterSpacing: '0.2em', textTransform: 'uppercase', color: T.muted, marginBottom: 8 }}>
+                Unscheduled
+              </div>
+              <UnscheduledZone
+                items={state.unscheduled.map((id) => state.items[id]).filter(Boolean)}
+                canvas={state.canvas}
+                assignmentGroups={state.canvas.assignmentGroups || {}}
+                onMoveItem={moveItem} onUpdateItem={updateItem} onDeleteItem={deleteItem}
+                draggingId={draggingId}
+                autoEditId={autoEditId} clearAutoEdit={() => setAutoEditId(null)}
+              />
             </div>
-            <UnscheduledZone
-              items={state.unscheduled.map((id) => state.items[id]).filter(Boolean)}
-              canvas={state.canvas}
-              assignmentGroups={state.canvas.assignmentGroups || {}}
-              onMoveItem={moveItem} onUpdateItem={updateItem} onDeleteItem={deleteItem}
-              draggingId={draggingId}
-              autoEditId={autoEditId} clearAutoEdit={() => setAutoEditId(null)}
-            />
           </aside>
         )}
       </main>
@@ -1306,7 +1353,19 @@ export default function ClassPlannerApp() {
     </SelectionProvider>
 
     <DragOverlay dropAnimation={null}>
-      {activeDragItem ? <DragOverlayCard item={activeDragItem} /> : null}
+      {activeDragItem ? (
+        <DragOverlayCard item={activeDragItem} />
+      ) : activeDragModule ? (
+        <div style={{
+          background: T.paper, border: `1px solid ${T.border}`,
+          borderLeft: `3px solid ${T.inkBlue}`, borderRadius: 3,
+          padding: '4px 10px',
+          fontFamily: FONT_MONO, fontSize: 11, color: T.ink,
+          boxShadow: '0 8px 24px rgba(26,20,16,0.18)',
+          maxWidth: 240, whiteSpace: 'nowrap',
+          overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{activeDragModule.name}</div>
+      ) : null}
     </DragOverlay>
     </DndContext>
   );

@@ -6,7 +6,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { T, FONT_MONO } from '../theme.js';
-import { weekKey, weekNumber, getAddableDatesAfter } from '../utils.js';
+import { weekKey, weekNumber, getAddableDatesAfter, moduleTitle } from '../utils.js';
 import ClassDayRow from './ClassDayRow.jsx';
 
 export default function ScheduleTable({
@@ -47,27 +47,24 @@ export default function ScheduleTable({
         const weekIdx = weekNumber(d);
         const isWeekStart = idx > 0 && k !== prevKey;
         prevKey = k;
-        const moduleTitle = state.modules?.[d];
+        const title = moduleTitle(state.modules?.[d]);
         const holidayLabel = state.holidays?.[d];
 
         return (
           <React.Fragment key={d}>
-            {moduleTitle && (
+            {title && (
               <div className="module-header">
                 <span>
-                  {moduleTitle}
+                  {title}
                   {moduleDayCounts[d] != null && (
-                    <span style={{
-                      fontFamily: FONT_MONO, fontSize: '11px', fontWeight: 400,
-                      color: T.muted, marginLeft: 10, letterSpacing: '0.02em',
-                    }}>
+                    <span className="module-header-count">
                       ({moduleDayCounts[d]} {moduleDayCounts[d] === 1 ? 'day' : 'days'})
                     </span>
                   )}
                 </span>
                 {!isStudent && (
                   <button onClick={() => onRemoveModule(d)} style={iconBtnStyleVal} title="Remove module header">
-                    <X size={14} />
+                    <X size={12} />
                   </button>
                 )}
               </div>

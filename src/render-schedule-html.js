@@ -9,7 +9,7 @@
  */
 
 import { LIGHT, DARK } from './theme.js';
-import { computeAllDays, generateClassDays, weekKey, weekNumber } from './utils.js';
+import { computeAllDays, generateClassDays, weekKey, weekNumber, moduleTitle } from './utils.js';
 
 export default function renderScheduleHtml(s, courseTitle) {
   const L = LIGHT;
@@ -70,14 +70,14 @@ export default function renderScheduleHtml(s, courseTitle) {
     else if (shadedWeek) bgColor = v('week-shade', L.weekShade);
     else bgColor = v('paper', L.paper);
 
-    // Module header row
-    const moduleTitle = s.modules?.[d];
-    if (moduleTitle) {
+    // Module header row (compact: small caps mono, accent line, slim padding)
+    const title = moduleTitle(s.modules?.[d]);
+    if (title) {
       const dayCount = pubModuleDayCounts[d];
       const dayCountHtml = dayCount != null
-        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 400; color: ${v('ink-mid', L.inkMid)}; margin-left: 10px; letter-spacing: 0.02em;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
+        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 400; color: ${v('muted', L.muted)}; margin-left: 8px; letter-spacing: 0.02em; text-transform: none;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
         : '';
-      rows += `<tr><th scope="colgroup" colspan="2" style="padding: 10px 16px; text-align: left; font-family: Georgia, serif; font-size: 16px; font-weight: 600; color: ${v('ink', L.ink)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)};">${moduleTitle}${dayCountHtml}</th></tr>`;
+      rows += `<tr><th scope="colgroup" colspan="2" style="padding: 4px 12px 4px 10px; text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-mid', L.inkMid)}; background: ${v('subtle', L.subtle)}; border-bottom: 1px solid ${v('border', L.border)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)};">${title}${dayCountHtml}</th></tr>`;
     }
 
     const weekBorderStyle = isNewWeek ? `border-top: 2px solid ${v('border-strong', L.borderStrong)};` : '';

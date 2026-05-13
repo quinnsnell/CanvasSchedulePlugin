@@ -202,10 +202,12 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
 
     let list = [];
     let groups = [];
+    let canvasModules = [];
     try {
-      [list, groups] = await Promise.all([
+      [list, groups, canvasModules] = await Promise.all([
         CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId),
         CanvasAPI.listAssignmentGroups(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => []),
+        CanvasAPI.listModules(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => []),
       ]);
     } catch (e) {
       if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); setRefreshing(false); return; }
@@ -216,8 +218,25 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
       groupsMap[g.id] = { id: g.id, name: g.name, color: GROUP_COLORS[i % GROUP_COLORS.length] };
     });
 
+    // Trimmed module list — we only need id + name for the sidebar.
+    // Sorted by Canvas's `position` so they show in instructor order.
+    const moduleList = (Array.isArray(canvasModules) ? canvasModules : [])
+      .slice()
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      .map((m) => ({ id: m.id, name: m.name }));
+
     updateState((s) => {
       s.canvas.assignmentGroups = groupsMap;
+      s.canvas.modules = moduleList;
+      // Update existing placed Canvas-sourced module labels in case any
+      // got renamed in Canvas since last refresh.
+      const byId = Object.fromEntries(moduleList.map((m) => [m.id, m.name]));
+      Object.keys(s.modules || {}).forEach((date) => {
+        const v = s.modules[date];
+        if (v && typeof v === 'object' && v.canvasModuleId && byId[v.canvasModuleId]) {
+          s.modules[date] = { ...v, title: byId[v.canvasModuleId] };
+        }
+      });
       if (published) {
         s.setup = published.setup || s.setup;
         s.items = published.items || {};

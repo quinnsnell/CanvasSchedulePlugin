@@ -22,4 +22,6 @@ export { rewriteEmbeddedLinks } from './utils/link-rewrite.js';
 
 export { exportTemplate, importTemplate } from './utils/template.js';
 
+export { moduleTitle, moduleCanvasId } from './utils/modules.js';
+
 export { Store } from './utils/store.js';

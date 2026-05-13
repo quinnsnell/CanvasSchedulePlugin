@@ -13,6 +13,7 @@
 
 import React from 'react';
 import { T, FONT_DISPLAY, FONT_BODY, FONT_MONO } from '../theme.js';
+import { moduleTitle } from '../utils.js';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -118,7 +119,7 @@ export default function MonthCalendar({ state, allDays, onDayClick }) {
 function DayCell({ date, inMonth, inSemester, isClassDay, state, onClick }) {
   const items = (state.schedule?.[date] || []).map((id) => state.items?.[id]).filter(Boolean);
   const holiday = state.holidays?.[date];
-  const moduleHeader = state.modules?.[date];
+  const moduleHeader = moduleTitle(state.modules?.[date]);
   const dayNum = new Date(date + 'T12:00:00').getDate();
 
   const dim = !inMonth || !inSemester;
