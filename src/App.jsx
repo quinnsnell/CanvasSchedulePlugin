@@ -261,6 +261,33 @@ export default function ClassPlannerApp() {
     });
   }, [state, loaded]);
 
+  // ── Iframe auto-resize: tell the parent how tall we are ───────
+  // When the planner is iframe-embedded (window.parent !== window),
+  // post our scrollHeight to the parent whenever it changes. The
+  // parent needs a tiny matching listener — see Canvas account-level
+  // Custom JS instructions in the project README — that updates the
+  // iframe's height to match. If no listener exists, the message is
+  // silently dropped, so this is safe even outside an iframe.
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.parent === window) return;
+    let lastHeight = 0;
+    const post = () => {
+      const h = document.documentElement.scrollHeight;
+      if (h === lastHeight) return;
+      lastHeight = h;
+      try {
+        window.parent.postMessage({ type: 'planner-resize', height: h }, '*');
+      } catch { /* parent on a different origin without postMessage access — silent */ }
+    };
+    post();
+    const ro = new ResizeObserver(post);
+    ro.observe(document.documentElement);
+    // Re-post on common content-changing events that ResizeObserver
+    // doesn't always catch (toggling panels, font loading, etc.).
+    window.addEventListener('load', post);
+    return () => { ro.disconnect(); window.removeEventListener('load', post); };
+  }, []);
+
 
   // ── Derived data ───────────────────────────────────────────────
   const allDays = useMemo(() => state ? computeAllDays(state.setup, state.extraDays) : [], [state]);
