@@ -16,6 +16,18 @@ import { T, FONT_BODY, FONT_MONO } from '../theme.js';
 import { CanvasAPI } from '../canvas-api.js';
 import { ToolbarBtn } from './ui.jsx';
 
+// Newlines around block-level tags so the source view is readable.
+// The browser ignores this whitespace on re-render, so it's safe to
+// round-trip through the contentEditable div.
+const BLOCK_TAGS = 'p|div|ul|ol|li|h[1-6]|blockquote|pre|table|tr|td|th|thead|tbody|section|article|header|footer|figure|figcaption|hr|br';
+function prettyHtml(html) {
+  if (!html) return '';
+  const openRe = new RegExp(`(<(?:${BLOCK_TAGS})(?:\\s[^>]*)?/?>)`, 'gi');
+  const closeRe = new RegExp(`(</(?:${BLOCK_TAGS})>)`, 'gi');
+  let out = html.replace(openRe, '\n$1').replace(closeRe, '$1\n');
+  return out.replace(/\n\s*\n/g, '\n').replace(/^\s+|\s+$/g, '');
+}
+
 export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
   const ref = useRef(null);
   const [canvasPicker, setCanvasPicker] = useState(null);
@@ -27,7 +39,7 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
 
   const toggleSource = () => {
     if (!showSource) {
-      setSourceValue(ref.current?.innerHTML || '');
+      setSourceValue(prettyHtml(ref.current?.innerHTML || ''));
       setShowSource(true);
     } else {
       if (ref.current) ref.current.innerHTML = sourceValue;
@@ -286,7 +298,7 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
             fontFamily: FONT_MONO, fontSize: '12px', lineHeight: 1.5,
             color: T.ink, background: T.cream,
             border: `1px solid ${T.borderStrong}`, borderRadius: 3,
-            resize: 'vertical', whiteSpace: 'pre', overflowWrap: 'normal',
+            resize: 'vertical',
           }}
         />
       )}
