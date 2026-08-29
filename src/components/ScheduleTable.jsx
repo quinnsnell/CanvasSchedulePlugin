@@ -42,7 +42,10 @@ export default function ScheduleTable({
       </div>
       {allDays.map((d, idx) => {
         const isExtra = !teachingSet.has(d);
-        const items = (state.schedule[d] || []).map((id) => state.items[id]).filter(Boolean);
+        const items = (state.schedule[d] || [])
+          .map((id) => state.items[id])
+          .filter(Boolean)
+          .filter((item) => !isStudent || item.type !== 'assign' || item.published !== false);
         const k = weekKey(d);
         const weekIdx = weekNumber(d);
         const isWeekStart = idx > 0 && k !== prevKey;

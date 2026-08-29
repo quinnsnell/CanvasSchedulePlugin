@@ -140,6 +140,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           existing.htmlUrl = a.html_url;
           existing.isQuiz = assignmentIsQuiz(a);
           existing.dueTime = dueTimeFromCanvas(a.due_at);
+          existing.published = !!a.published;
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           return;
         }
@@ -159,7 +160,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           const match = pending.find((p) => !claimedPending.has(p.id) && p.date === due);
           if (match) claimedPending.add(match.id);
         }
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a), published: !!a.published };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) s.extraDays.push(due);
           s.schedule[due] = s.schedule[due] || [];
@@ -265,6 +266,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
           existing.htmlUrl = a.html_url;
           existing.isQuiz = assignmentIsQuiz(a);
           existing.dueTime = dueTimeFromCanvas(a.due_at);
+          existing.published = !!a.published;
           if (a.assignment_group_id) existing.groupId = a.assignment_group_id;
           const newDue = a.due_at ? localDateStr(a.due_at) : null;
           if (newDue && newDue !== existing.dueDate) {
@@ -282,7 +284,7 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
         }
         const id = uid();
         const due = a.due_at ? localDateStr(a.due_at) : null;
-        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a) };
+        s.items[id] = { id, type: 'assign', title: a.name, points: a.points_possible || 0, canvasId: a.id, htmlUrl: a.html_url, dueDate: due, dueTime: dueTimeFromCanvas(a.due_at), groupId: a.assignment_group_id || null, isQuiz: assignmentIsQuiz(a), published: !!a.published };
         if (due) {
           if (!teachingNow.has(due) && !s.extraDays.includes(due)) { s.extraDays.push(due); autoAdded++; }
           s.schedule[due] = s.schedule[due] || [];

@@ -16,7 +16,10 @@ export function generateICal(state) {
   ];
   const allDays = computeAllDays(state.setup, state.extraDays);
   allDays.forEach((d) => {
-    const items = (state.schedule[d] || []).map((id) => state.items[id]).filter(Boolean);
+    const items = (state.schedule[d] || [])
+      .map((id) => state.items[id])
+      .filter(Boolean)
+      .filter((item) => item.type !== 'assign' || item.published !== false);
     if (items.length === 0) return;
     const dateStr = d.replace(/-/g, '');
     items.forEach((item, i) => {

@@ -60,7 +60,10 @@ export default function renderScheduleHtml(s, courseTitle) {
     const isNewWeek = wk !== prevWk;
     prevWk = wk;
     const isExtra = !teaching.has(d);
-    const items = (s.schedule[d] || []).map((id) => s.items[id]).filter(Boolean);
+    const items = (s.schedule[d] || [])
+      .map((id) => s.items[id])
+      .filter(Boolean)
+      .filter((item) => item.type !== 'assign' || item.published !== false);
     const shadedWeek = weekNumber(d) % 2 === 1;
     const holidayLabel = s.holidays?.[d];
 
