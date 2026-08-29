@@ -126,6 +126,9 @@ export default function renderScheduleHtml(s, courseTitle) {
     <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
       <caption style="text-align: left; padding: 12px 16px 6px; font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: ${v('ink', L.ink)}; caption-side: top;">
         ${courseTitle || 'Course Schedule'}
+        ${s.publishedAt ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: ${v('muted', L.muted)}; letter-spacing: 0.08em; text-transform: uppercase;">
+          Published ${new Date(s.publishedAt).toLocaleString()}
+        </div>` : ''}
         ${s.icalUrl ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: ${v('ink-mid', L.inkMid)};">
           <a href="${s.icalUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline;">${s.icalUrl.includes('/calendar/') ? 'Subscribe to calendar (auto-updates)' : 'Download calendar (.ics)'}</a>
           ${s.icalUrl.includes('/calendar/')

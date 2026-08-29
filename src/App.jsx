@@ -1016,7 +1016,7 @@ export default function ClassPlannerApp() {
         if (studentIcalUrl) st.icalUrl = studentIcalUrl;
         return st;
       }, true);
-      const html = renderScheduleHtml({ ...s, icalUrl: studentIcalUrl }, s.setup.courseTitle);
+      const html = renderScheduleHtml({ ...s, icalUrl: studentIcalUrl, publishedAt: now }, s.setup.courseTitle);
       const slug = await CanvasAPI.publishPage(s.canvas.baseUrl, s.canvas.token, s.canvas.courseId, 'Schedule', html);
       const pageUrl = `${s.canvas.baseUrl.replace(/\/+$/, '')}/courses/${s.canvas.courseId}/pages/${slug}`;
       setStudentEmbed({ pageUrl, icalUrl });
