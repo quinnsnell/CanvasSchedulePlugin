@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Bold, Italic, Link as LinkIcon, FileText, BookOpen, X, Image, Upload,
+  Bold, Italic, Link as LinkIcon, FileText, BookOpen, X, Image, Upload, Code,
 } from 'lucide-react';
 import { T, FONT_BODY, FONT_MONO } from '../theme.js';
 import { CanvasAPI } from '../canvas-api.js';
@@ -21,7 +21,21 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
   const [canvasPicker, setCanvasPicker] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [showSource, setShowSource] = useState(false);
+  const [sourceValue, setSourceValue] = useState('');
   const savedRangeRef = useRef(null);
+
+  const toggleSource = () => {
+    if (!showSource) {
+      setSourceValue(ref.current?.innerHTML || '');
+      setShowSource(true);
+    } else {
+      if (ref.current) ref.current.innerHTML = sourceValue;
+      setShowSource(false);
+    }
+  };
+
+  const currentHtml = () => (showSource ? sourceValue : (ref.current?.innerHTML || ''));
 
   useEffect(() => {
     if (ref.current) {
@@ -157,11 +171,11 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
     <div>
       {/* Toolbar */}
       <div className="flex items-center gap-1 mb-2 flex-wrap">
-        <ToolbarBtn onClick={() => exec('bold')} title="Bold"><Bold size={12} /></ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('italic')} title="Italic"><Italic size={12} /></ToolbarBtn>
-        <ToolbarBtn onClick={() => exec('insertUnorderedList')} title="Bullet list">•</ToolbarBtn>
-        <ToolbarBtn onClick={insertLink} title="Insert link"><LinkIcon size={12} /></ToolbarBtn>
-        <ToolbarBtn onClick={handleImageButton} title="Insert image"><Image size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('bold')} title="Bold" disabled={showSource}><Bold size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('italic')} title="Italic" disabled={showSource}><Italic size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={() => exec('insertUnorderedList')} title="Bullet list" disabled={showSource}>•</ToolbarBtn>
+        <ToolbarBtn onClick={insertLink} title="Insert link" disabled={showSource}><LinkIcon size={12} /></ToolbarBtn>
+        <ToolbarBtn onClick={handleImageButton} title="Insert image" disabled={showSource}><Image size={12} /></ToolbarBtn>
         <input
           ref={fileInputRef}
           type="file"
@@ -175,16 +189,16 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
         />
         {canvasReady && (
           <>
-            <ToolbarBtn onClick={() => openCanvasPicker('files')} title="Insert Canvas file link">
+            <ToolbarBtn onClick={() => openCanvasPicker('files')} title="Insert Canvas file link" disabled={showSource}>
               <FileText size={12} />
             </ToolbarBtn>
-            <ToolbarBtn onClick={() => openCanvasPicker('pages')} title="Insert Canvas page link">
+            <ToolbarBtn onClick={() => openCanvasPicker('pages')} title="Insert Canvas page link" disabled={showSource}>
               <BookOpen size={12} />
             </ToolbarBtn>
             <ToolbarBtn
               onClick={handleUploadButton}
               title={uploading ? 'Uploading to Canvas…' : 'Upload file to Canvas and insert link'}
-              disabled={uploading}
+              disabled={uploading || showSource}
             >
               <Upload size={12} />
             </ToolbarBtn>
@@ -200,6 +214,12 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
             />
           </>
         )}
+        <ToolbarBtn
+          onClick={toggleSource}
+          title={showSource ? 'Back to rich text' : 'View HTML source'}
+        >
+          <Code size={12} />
+        </ToolbarBtn>
         <div className="ml-auto flex gap-1">
           <button onClick={onCancel} style={{
             fontFamily: FONT_MONO, fontSize: '10px', padding: '4px 8px',
@@ -207,7 +227,7 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
           }}>
             Cancel
           </button>
-          <button onClick={() => onSave(ref.current?.innerHTML || '')} style={{
+          <button onClick={() => onSave(currentHtml())} style={{
             fontFamily: FONT_MONO, fontSize: '10px', padding: '4px 8px',
             color: '#fff', border: 'none', borderRadius: 2, background: T.inkBlue,
           }}>
@@ -250,11 +270,26 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
         suppressContentEditableWarning
         onPaste={handlePaste}
         style={{
+          display: showSource ? 'none' : 'block',
           fontFamily: FONT_BODY, fontSize: '14px', color: T.inkMid, lineHeight: 1.5,
           minHeight: 60, padding: 8, border: `1px solid ${T.borderStrong}`,
           borderRadius: 3, background: T.cream,
         }}
       />
+      {showSource && (
+        <textarea
+          value={sourceValue}
+          onChange={(e) => setSourceValue(e.target.value)}
+          spellCheck={false}
+          style={{
+            width: '100%', minHeight: 120, padding: 8,
+            fontFamily: FONT_MONO, fontSize: '12px', lineHeight: 1.5,
+            color: T.ink, background: T.cream,
+            border: `1px solid ${T.borderStrong}`, borderRadius: 3,
+            resize: 'vertical', whiteSpace: 'pre', overflowWrap: 'normal',
+          }}
+        />
+      )}
     </div>
   );
 }

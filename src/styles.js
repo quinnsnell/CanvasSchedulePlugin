@@ -15,7 +15,10 @@ export function appStyles() {
     .planner-card a.planner-title-link:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
     .planner-rich p { margin: 0 0 0.4rem 0; }
     .planner-rich p:last-child { margin-bottom: 0; }
-    .planner-rich ul, .planner-rich ol { margin: 0.2rem 0 0.4rem 1.2rem; }
+    .planner-rich ul, .planner-rich ol { margin: 0.2rem 0 0.4rem 0; padding-left: 1.4rem; }
+    .planner-rich ul { list-style: disc; }
+    .planner-rich ol { list-style: decimal; }
+    .planner-rich li { margin: 0.1rem 0; }
     .planner-rich [contenteditable="true"]:focus { outline: 2px solid ${T.inkBlue}; outline-offset: 2px; border-radius: 3px; }
     .drop-target-active { background: ${T.inkBlueSoft} !important; }
     .item-dragging { opacity: 0.4; }
