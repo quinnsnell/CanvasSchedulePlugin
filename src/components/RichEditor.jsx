@@ -96,10 +96,29 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
       const fileId = meta && typeof meta === 'object' ? meta.id : null;
       const displayName = (meta && meta.display_name) || file.name;
       if (!fileId) throw new Error('Upload succeeded but Canvas returned no file id');
-      const href = `${base}/courses/${canvas.courseId}/files/${fileId}/download`;
+      const downloadUrl = `${base}/courses/${canvas.courseId}/files/${fileId}/download`;
       restoreSelection();
       const escaped = displayName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      document.execCommand('insertHTML', false, `<a href="${href}">${escaped}</a>`);
+      let html = `<a href="${downloadUrl}">${escaped}</a>`;
+
+      // For Jupyter notebooks add an "Open in Colab" pill next to the
+      // download link. Colab fetches the notebook over plain HTTPS so the
+      // URL must be publicly accessible — attach Canvas's file verifier
+      // (uuid) so it bypasses the login gate.
+      if (/\.ipynb$/i.test(displayName)) {
+        const verifier = meta && meta.uuid;
+        const publicUrl = verifier
+          ? `${downloadUrl}?verifier=${encodeURIComponent(verifier)}`
+          : downloadUrl;
+        const colabUrl = `https://colab.research.google.com/#url=${encodeURIComponent(publicUrl)}`;
+        const pillStyle =
+          "display:inline-block;font-family:'JetBrains Mono',ui-monospace,monospace;" +
+          'font-size:10px;font-weight:500;padding:2px 8px;border-radius:10px;' +
+          'background:#F9AB00;color:#1a1410;text-decoration:none;letter-spacing:0.04em;';
+        html += ` <span style="color:#8A7F71;">·</span> <a href="${colabUrl}" target="_blank" rel="noreferrer" style="${pillStyle}">Open in Colab</a>`;
+      }
+
+      document.execCommand('insertHTML', false, html);
     } catch (e) {
       setUploadError(e.message || 'Upload failed');
     } finally {
