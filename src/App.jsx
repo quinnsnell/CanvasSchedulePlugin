@@ -294,6 +294,7 @@ export default function ClassPlannerApp() {
   // throws "Rendered more hooks than during the previous render."
 
   const syncRef = useRef(null);
+  const moveItemRef = useRef(null);
 
   const canvasSync = useMemo(
     () => createCanvasSync({ stateRef, updateState, setState, showToast, setRefreshing, freshState }),
@@ -425,30 +426,14 @@ export default function ClassPlannerApp() {
       return;
     }
 
-    // Different container: move item
-    setState((prev) => {
-      const next = structuredClone(prev);
-      if (sourceContainer === 'unscheduled') {
-        next.unscheduled = next.unscheduled.filter((id) => id !== activeId);
-      } else if (next.schedule[sourceContainer]) {
-        next.schedule[sourceContainer] = next.schedule[sourceContainer].filter((id) => id !== activeId);
-        if (next.schedule[sourceContainer].length === 0) delete next.schedule[sourceContainer];
-      }
-      if (targetContainer === 'unscheduled') {
-        next.unscheduled.push(activeId);
-        if (next.items[activeId]) next.items[activeId].dueDate = null;
-      } else {
-        next.schedule[targetContainer] = next.schedule[targetContainer] || [];
-        const overIndex = next.schedule[targetContainer].indexOf(overId);
-        if (overIndex !== -1) {
-          next.schedule[targetContainer].splice(overIndex, 0, activeId);
-        } else {
-          next.schedule[targetContainer].push(activeId);
-        }
-        if (next.items[activeId]) next.items[activeId].dueDate = targetContainer;
-      }
-      return next;
-    });
+    // Different container: route through moveItem so Canvas syncs the due date.
+    const toDate = targetContainer === 'unscheduled' ? null : targetContainer;
+    let position;
+    if (toDate !== null) {
+      const overIndex = (s.schedule[toDate] || []).indexOf(overId);
+      if (overIndex !== -1) position = overIndex;
+    }
+    moveItemRef.current?.(activeId, toDate, position);
   }, [findItemContainer]);
 
   const handleDragCancel = useCallback(() => {
@@ -952,6 +937,7 @@ export default function ClassPlannerApp() {
     if (didCanvasSync) showToast('Synced to Canvas');
     else if (canvasError) showToast(`Canvas sync failed: ${canvasError}`, 'err');
   };
+  moveItemRef.current = moveItem;
 
   // ── Publish to Canvas ──────────────────────────────────────────
 
