@@ -34,7 +34,7 @@ export default function ClassDayRow({
 
   const d = new Date(date + 'T00:00:00');
   const weekShade = (weekIdx ?? 0) % 2 === 1;
-  const rowBg = isExtra ? T.amberSoft : (weekShade ? T.weekShade : T.paper);
+  const rowBg = weekShade ? T.weekShade : T.paper;
   const dayLabel = DAY_FULL[DAY_CODES[d.getDay()]];
 
   return (

@@ -66,7 +66,6 @@ export default function renderScheduleHtml(s, courseTitle) {
 
     let bgColor;
     if (holidayLabel) bgColor = v('holiday-bg', L.holidayBg);
-    else if (isExtra) bgColor = v('amber-soft', L.amberSoft);
     else if (shadedWeek) bgColor = v('week-shade', L.weekShade);
     else bgColor = v('paper', L.paper);
 
