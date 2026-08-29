@@ -261,7 +261,37 @@ async function uploadCourseFile(baseUrl, token, courseId, filename, contentType,
       }
     }
   }
+  // With redirect: 'follow' the finalization response may already be here.
+  // Try to parse it — if it's Canvas's file metadata, hand it back.
+  try {
+    const text = await step2.text();
+    if (text) {
+      const meta = JSON.parse(text);
+      if (meta && meta.id) return meta;
+    }
+  } catch { /* not JSON — caller can look up by name */ }
   return true;
+}
+
+/**
+ * Find a course file by display_name. Returns the newest match (Canvas
+ * appends "-1", "-2", ... on rename, so exact match may not exist).
+ * Used as a fallback for `uploadUserFile` when the upload flow doesn't
+ * return the created file's metadata (S3→Canvas redirect CORS-blocked, etc.).
+ */
+async function findRecentCourseFile(baseUrl, token, courseId, filename) {
+  const files = await canvasFetch(baseUrl, token,
+    `/courses/${courseId}/files?search_term=${encodeURIComponent(filename)}&per_page=25&sort=created_at&order=desc`);
+  if (!Array.isArray(files) || files.length === 0) return null;
+  const exact = files.find((f) => f.display_name === filename || f.filename === filename);
+  if (exact) return exact;
+  // Fallback: pick the newest file whose display_name starts with the
+  // filename's basename (Canvas may have appended "-1", "-2", ...).
+  const base = filename.replace(/\.[^.]+$/, '');
+  const matches = files.filter((f) => (f.display_name || '').startsWith(base));
+  if (matches.length === 0) return null;
+  matches.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  return matches[0];
 }
 
 export const CanvasAPI = {
@@ -383,13 +413,21 @@ export const CanvasAPI = {
    * course's Files root. Canvas renames on collision (never overwrites
    * pre-existing files). Returns Canvas's file record — includes `id` and
    * `display_name`, which the caller uses to build a stable download link.
+   *
+   * If the upload flow doesn't return metadata directly (S3→Canvas
+   * confirmation gets CORS-blocked in the browser), falls back to looking
+   * the file up by name.
    */
-  uploadUserFile(baseUrl, token, courseId, file) {
-    return uploadCourseFile(
+  async uploadUserFile(baseUrl, token, courseId, file) {
+    const meta = await uploadCourseFile(
       baseUrl, token, courseId,
       file.name, file.type || 'application/octet-stream', file,
       { onDuplicate: 'rename', preDelete: false },
     );
+    if (meta && typeof meta === 'object' && meta.id) return meta;
+    const found = await findRecentCourseFile(baseUrl, token, courseId, file.name);
+    if (found) return found;
+    throw new Error('Uploaded but could not locate the file in Canvas');
   },
 
   /** Download the published schedule JSON from Canvas course files. */
