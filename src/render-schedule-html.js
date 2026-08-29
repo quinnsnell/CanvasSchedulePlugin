@@ -90,7 +90,7 @@ export default function renderScheduleHtml(s, courseTitle) {
         const titleHtml = item.htmlUrl
           ? `<a href="${item.htmlUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline; text-underline-offset: 2px;">${item.title || 'Untitled'}</a>`
           : (item.title || 'Untitled');
-        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border-strong', L.borderStrong)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
+        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid #000; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
           <div style="margin-bottom: 4px;">
             <span style="font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
             ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 12px; color: ${v('ink-mid', L.inkMid)}; margin-left: 6px;">${item.points} pts</span>` : ''}
@@ -98,7 +98,7 @@ export default function renderScheduleHtml(s, courseTitle) {
           <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${v('ink', L.ink)}; line-height: 1.3;">${titleHtml}</div>
         </div>`;
       } else if (item.type === 'rich') {
-        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid ${v('border-strong', L.borderStrong)}; border-left: 3px solid ${v('sienna', L.sienna)}; border-radius: 3px; padding: 10px 12px;">
+        content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid #000; border-left: 3px solid ${v('sienna', L.sienna)}; border-radius: 3px; padding: 10px 12px;">
           <div style="font-size: 13px; color: ${v('ink', L.ink)}; line-height: 1.5;">${item.html || ''}</div>
         </div>`;
       }
