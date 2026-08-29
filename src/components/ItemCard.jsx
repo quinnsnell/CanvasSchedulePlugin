@@ -53,8 +53,8 @@ export default function ItemCard({
   });
 
   const isQuiz = isAssign && item.isQuiz;
-  const accent = isQuiz ? T.amber : isAssign ? T.inkBlue : T.sienna;
-  const accentSoft = isQuiz ? T.amberSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
+  const accent = isQuiz ? T.skyBlue : isAssign ? T.inkBlue : T.sienna;
+  const accentSoft = isQuiz ? T.skyBlueSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
   const isDragging = isSortableDragging || draggingId === item.id;
 
   const style = {
@@ -156,8 +156,8 @@ export function DragOverlayCard({ item }) {
   if (!item) return null;
   const isAssign = item.type === 'assign';
   const isQuiz = isAssign && item.isQuiz;
-  const accent = isQuiz ? T.amber : isAssign ? T.inkBlue : T.sienna;
-  const accentSoft = isQuiz ? T.amberSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
+  const accent = isQuiz ? T.skyBlue : isAssign ? T.inkBlue : T.sienna;
+  const accentSoft = isQuiz ? T.skyBlueSoft : isAssign ? T.inkBlueSoft : T.siennaSoft;
 
   return (
     <div
