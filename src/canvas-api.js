@@ -253,6 +253,10 @@ export const CanvasAPI = {
   listCourses: (b, t) =>
     canvasFetchAll(b, t, '/courses?enrollment_type=teacher&state[]=available&state[]=unpublished&state[]=created&include[]=term&per_page=100'),
 
+  /** Fetch a single course, including its term (for start/end dates). */
+  getCourse: (b, t, c) =>
+    canvasFetch(b, t, `/courses/${c}?include[]=term`),
+
   /** List all assignments in a course (paginated). */
   listAssignments: (b, t, c) =>
     canvasFetchAll(b, t, `/courses/${c}/assignments?per_page=100`),

@@ -204,11 +204,13 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
     let list = [];
     let groups = [];
     let canvasModules = [];
+    let course = null;
     try {
-      [list, groups, canvasModules] = await Promise.all([
+      [list, groups, canvasModules, course] = await Promise.all([
         CanvasAPI.listAssignments(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId),
         CanvasAPI.listAssignmentGroups(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => []),
         CanvasAPI.listModules(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => []),
+        CanvasAPI.getCourse(s0.canvas.baseUrl, s0.canvas.token, s0.canvas.courseId).catch(() => null),
       ]);
     } catch (e) {
       if (!published) { showToast(`Refresh failed: ${e.message}`, 'err'); setRefreshing(false); return; }
@@ -254,6 +256,18 @@ export function createCanvasSync({ stateRef, updateState, setState, showToast, s
         s.unscheduled = [];
       }
       s.pendingCreations = [];
+
+      // Pull start/end/title from Canvas (course or term). Overrides
+      // whatever the published snapshot restored so a refresh is a
+      // reliable way to reset dates when Canvas's authoritative range
+      // shifts (e.g., after admin adjusts the term).
+      if (course) {
+        const startAt = course.start_at || course.term?.start_at;
+        const endAt = course.end_at || course.term?.end_at;
+        if (startAt) s.setup.startDate = startAt.slice(0, 10);
+        if (endAt) s.setup.endDate = endAt.slice(0, 10);
+        if (course.name) s.setup.courseTitle = course.name;
+      }
 
       const teachingNow = new Set(generateClassDays(s.setup.startDate, s.setup.endDate, s.setup.classDays));
       let added = 0, updated = 0, autoAdded = 0;
