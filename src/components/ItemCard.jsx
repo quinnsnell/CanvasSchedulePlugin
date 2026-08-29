@@ -237,6 +237,20 @@ function AssignmentContent({ item, isStudent, titleEditing, setTitleEditing, onU
             demo
           </span>
         ) : null}
+        {item.canvasId && !isStudent && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onUpdate(item.id, { published: !item.published }); }}
+            title={item.published ? 'Published on Canvas — click to unpublish' : 'Unpublished on Canvas — click to publish'}
+            style={{
+              ...pillStyle(item.published ? T.forest : T.ox, `${item.published ? T.forest : T.ox}18`),
+              border: `1px solid ${item.published ? T.forest : T.ox}44`,
+              cursor: 'pointer',
+            }}
+          >
+            {item.published ? 'Published' : 'Unpublished'}
+          </button>
+        )}
       </div>
 
       {titleEditing && !isStudent ? (

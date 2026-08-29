@@ -299,6 +299,13 @@ export const CanvasAPI = {
       body: JSON.stringify({ assignment: { name } }),
     }),
 
+  /** Publish or unpublish an assignment (works for classic quizzes too). */
+  setPublished: (b, t, c, a, published) =>
+    canvasFetch(b, t, `/courses/${c}/assignments/${a}`, {
+      method: 'PUT',
+      body: JSON.stringify({ assignment: { published: !!published } }),
+    }),
+
   /** Delete an assignment in Canvas (also removes the backing quiz, if any). */
   deleteAssignment: (b, t, c, a) =>
     canvasFetch(b, t, `/courses/${c}/assignments/${a}`, { method: 'DELETE' }),

@@ -895,6 +895,21 @@ export default function ClassPlannerApp() {
         state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, due
       ).catch(() => {});
     }
+    // Sync published toggle to Canvas; revert local state on failure.
+    if ('published' in patch && item?.canvasId &&
+        state.canvas.connected && state.canvas.courseId) {
+      CanvasAPI.setPublished(
+        state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, patch.published
+      ).then(() => {
+        showToast(patch.published ? 'Published on Canvas' : 'Unpublished on Canvas');
+      }).catch((e) => {
+        updateState((s) => {
+          if (s.items[id]) s.items[id].published = !patch.published;
+          return s;
+        });
+        showToast(`Publish failed: ${e.message}`, 'err');
+      });
+    }
   };
 
   // ── Move item between days ─────────────────────────────────────
