@@ -101,13 +101,17 @@ export function ActionButton({ children, onClick, primary, disabled }) {
 
 // ── Rich editor toolbar button ─────────────────────────────────
 
-export function ToolbarBtn({ children, onClick, title }) {
+export function ToolbarBtn({ children, onClick, title, disabled }) {
   return (
-    <button onMouseDown={(e) => { e.preventDefault(); onClick(); }} title={title}
+    <button
+      onMouseDown={(e) => { e.preventDefault(); if (!disabled) onClick(); }}
+      title={title}
+      disabled={disabled}
       style={{
         padding: '4px 8px', border: `1px solid ${T.border}`, background: T.paper,
         color: T.muted, borderRadius: 2, fontFamily: FONT_MONO, fontSize: '11px',
-        minWidth: 24, cursor: 'pointer',
+        minWidth: 24, cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.5 : 1,
       }}>
       {children}
     </button>

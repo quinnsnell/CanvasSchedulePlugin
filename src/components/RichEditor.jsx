@@ -10,7 +10,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Bold, Italic, Link as LinkIcon, FileText, BookOpen, X, Image,
+  Bold, Italic, Link as LinkIcon, FileText, BookOpen, X, Image, Upload,
 } from 'lucide-react';
 import { T, FONT_BODY, FONT_MONO } from '../theme.js';
 import { CanvasAPI } from '../canvas-api.js';
@@ -19,6 +19,9 @@ import { ToolbarBtn } from './ui.jsx';
 export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
   const ref = useRef(null);
   const [canvasPicker, setCanvasPicker] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const savedRangeRef = useRef(null);
 
   useEffect(() => {
     if (ref.current) {
@@ -40,6 +43,7 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
   };
 
   const fileInputRef = useRef(null);
+  const uploadInputRef = useRef(null);
 
   const insertImageFromFile = (file) => {
     if (!file || !file.type.startsWith('image/')) return;
@@ -53,6 +57,54 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
 
   const handleImageButton = () => {
     fileInputRef.current?.click();
+  };
+
+  // Save the current selection so we can restore it after the file dialog
+  // steals focus. execCommand('insertHTML') only works with an active range
+  // inside the editor, so without this the link would land at document start.
+  const rememberSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode)) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const restoreSelection = () => {
+    ref.current?.focus();
+    const range = savedRangeRef.current;
+    if (!range) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
+  const handleUploadButton = () => {
+    if (uploading) return;
+    rememberSelection();
+    uploadInputRef.current?.click();
+  };
+
+  const uploadFileToCanvas = async (file) => {
+    if (!file || !canvasReady) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const meta = await CanvasAPI.uploadUserFile(canvas.baseUrl, canvas.token, canvas.courseId, file);
+      const base = canvas.baseUrl.replace(/\/+$/, '');
+      // Prefer the Canvas-hosted download URL (auth-gated, stable) over the
+      // presigned url in `meta.url` — the latter expires.
+      const fileId = meta && typeof meta === 'object' ? meta.id : null;
+      const displayName = (meta && meta.display_name) || file.name;
+      if (!fileId) throw new Error('Upload succeeded but Canvas returned no file id');
+      const href = `${base}/courses/${canvas.courseId}/files/${fileId}/download`;
+      restoreSelection();
+      const escaped = displayName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      document.execCommand('insertHTML', false, `<a href="${href}">${escaped}</a>`);
+    } catch (e) {
+      setUploadError(e.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handlePaste = (e) => {
@@ -129,6 +181,23 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
             <ToolbarBtn onClick={() => openCanvasPicker('pages')} title="Insert Canvas page link">
               <BookOpen size={12} />
             </ToolbarBtn>
+            <ToolbarBtn
+              onClick={handleUploadButton}
+              title={uploading ? 'Uploading to Canvas…' : 'Upload file to Canvas and insert link'}
+              disabled={uploading}
+            >
+              <Upload size={12} />
+            </ToolbarBtn>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadFileToCanvas(file);
+                e.target.value = '';
+              }}
+            />
           </>
         )}
         <div className="ml-auto flex gap-1">
@@ -146,6 +215,16 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
           </button>
         </div>
       </div>
+
+      {/* Upload status */}
+      {(uploading || uploadError) && (
+        <div style={{
+          fontFamily: FONT_MONO, fontSize: '10px', marginBottom: 6,
+          color: uploadError ? T.ox : T.muted,
+        }}>
+          {uploadError ? `Upload failed: ${uploadError}` : 'Uploading to Canvas…'}
+        </div>
+      )}
 
       {/* Canvas file/page picker dropdown */}
       {canvasPicker && (

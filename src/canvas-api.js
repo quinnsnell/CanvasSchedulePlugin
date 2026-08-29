@@ -205,16 +205,24 @@ async function getPublicFileUrl(baseUrl, token, courseId, filename) {
   return meta.public_url;
 }
 
-async function uploadCourseFile(baseUrl, token, courseId, filename, contentType, blob) {
-  // Delete existing file first to avoid accumulating versions
-  try {
-    const files = await canvasFetch(baseUrl, token,
-      `/courses/${courseId}/files?search_term=${filename}&per_page=10`);
-    const existing = files.find((f) => f.display_name === filename || f.filename === filename);
-    if (existing) {
-      await canvasFetch(baseUrl, token, `/files/${existing.id}`, { method: 'DELETE' });
-    }
-  } catch { /* ok if delete fails */ }
+async function uploadCourseFile(baseUrl, token, courseId, filename, contentType, blob, options = {}) {
+  const { onDuplicate = 'overwrite', parentFolderPath = '/', preDelete = true } = options;
+
+  // For internal well-known files (schedule JSON, iCal) we pre-delete so a
+  // failed overwrite doesn't leave two copies with the same display_name.
+  // For user uploads (onDuplicate: 'rename') we skip this — Canvas handles
+  // collisions by suffixing "-1", "-2", etc., and we never want to delete
+  // an instructor's other course files.
+  if (preDelete) {
+    try {
+      const files = await canvasFetch(baseUrl, token,
+        `/courses/${courseId}/files?search_term=${filename}&per_page=10`);
+      const existing = files.find((f) => f.display_name === filename || f.filename === filename);
+      if (existing) {
+        await canvasFetch(baseUrl, token, `/files/${existing.id}`, { method: 'DELETE' });
+      }
+    } catch { /* ok if delete fails */ }
+  }
 
   // Step 1: Request an upload URL from Canvas
   const step1 = await canvasFetch(baseUrl, token, `/courses/${courseId}/files`, {
@@ -223,8 +231,8 @@ async function uploadCourseFile(baseUrl, token, courseId, filename, contentType,
       name: filename,
       content_type: contentType,
       size: blob.size,
-      on_duplicate: 'overwrite',
-      parent_folder_path: '/',
+      on_duplicate: onDuplicate,
+      parent_folder_path: parentFolderPath,
     }),
   });
 
@@ -238,11 +246,19 @@ async function uploadCourseFile(baseUrl, token, courseId, filename, contentType,
   if (step2.status >= 400) {
     throw new Error(`File upload failed: ${step2.status}`);
   }
-  // Step 3: If Canvas returned a redirect, follow it to confirm the upload
+  // Step 3: If Canvas returned a redirect, follow it to confirm the upload.
+  // The confirmation response is the created file's metadata (id, display_name,
+  // url, etc.) — we return it so callers that need to link to the file can.
   if (step2.status >= 300) {
     const confirmUrl = step2.headers.get('Location');
     if (confirmUrl) {
-      await fetch(proxyUrl(confirmUrl, baseUrl), { headers: { Authorization: `Bearer ${token}` } });
+      const confirmRes = await fetch(proxyUrl(confirmUrl, baseUrl), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (confirmRes.ok) {
+        const text = await confirmRes.text().catch(() => '');
+        try { return text ? JSON.parse(text) : true; } catch { return true; }
+      }
     }
   }
   return true;
@@ -360,6 +376,20 @@ export const CanvasAPI = {
   uploadIcal(baseUrl, token, courseId, icsText) {
     const blob = new Blob([icsText], { type: 'text/calendar' });
     return uploadCourseFile(baseUrl, token, courseId, ICAL_FILENAME, 'text/calendar', blob);
+  },
+
+  /**
+   * Upload an arbitrary user-chosen file (slides, PDF, etc.) into the
+   * course's Files root. Canvas renames on collision (never overwrites
+   * pre-existing files). Returns Canvas's file record — includes `id` and
+   * `display_name`, which the caller uses to build a stable download link.
+   */
+  uploadUserFile(baseUrl, token, courseId, file) {
+    return uploadCourseFile(
+      baseUrl, token, courseId,
+      file.name, file.type || 'application/octet-stream', file,
+      { onDuplicate: 'rename', preDelete: false },
+    );
   },
 
   /** Download the published schedule JSON from Canvas course files. */
