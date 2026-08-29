@@ -104,13 +104,15 @@ export default function RichEditor({ initialHtml, canvas, onSave, onCancel }) {
       // For Jupyter notebooks add an "Open in Colab" pill next to the
       // download link. Colab fetches the notebook over plain HTTPS so the
       // URL must be publicly accessible — attach Canvas's file verifier
-      // (uuid) so it bypasses the login gate.
+      // (uuid) so it bypasses the login gate. Colab's undocumented but
+      // widely-used route for arbitrary URLs is /notebook#fileId=<url>
+      // (Colab treats fileId as a URL when it doesn't look like a Drive id).
       if (/\.ipynb$/i.test(displayName)) {
         const verifier = meta && meta.uuid;
         const publicUrl = verifier
           ? `${downloadUrl}?verifier=${encodeURIComponent(verifier)}`
           : downloadUrl;
-        const colabUrl = `https://colab.research.google.com/#url=${encodeURIComponent(publicUrl)}`;
+        const colabUrl = `https://colab.research.google.com/notebook#fileId=${encodeURIComponent(publicUrl)}`;
         const pillStyle =
           "display:inline-block;font-family:'JetBrains Mono',ui-monospace,monospace;" +
           'font-size:10px;font-weight:500;padding:2px 8px;border-radius:10px;' +
