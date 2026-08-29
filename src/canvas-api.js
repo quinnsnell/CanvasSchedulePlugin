@@ -411,34 +411,23 @@ export const CanvasAPI = {
   /**
    * Upload an arbitrary user-chosen file (slides, PDF, etc.) into the
    * course's Files root. Canvas renames on collision (never overwrites
-   * pre-existing files). Returns Canvas's file record — includes `id`,
-   * `display_name`, and `uuid` (usable as a `?verifier=` for public
-   * download links), which the caller uses to build a stable download link.
+   * pre-existing files). Returns Canvas's file record — includes `id` and
+   * `display_name`, which the caller uses to build a stable download link.
    *
    * If the upload flow doesn't return metadata directly (S3→Canvas
    * confirmation gets CORS-blocked in the browser), falls back to looking
    * the file up by name.
-   *
-   * Always re-fetches /files/{id} at the end so the returned record has
-   * the full field set (list endpoints sometimes omit `uuid`).
    */
   async uploadUserFile(baseUrl, token, courseId, file) {
-    let meta = await uploadCourseFile(
+    const meta = await uploadCourseFile(
       baseUrl, token, courseId,
       file.name, file.type || 'application/octet-stream', file,
       { onDuplicate: 'rename', preDelete: false },
     );
-    if (!meta || typeof meta !== 'object' || !meta.id) {
-      meta = await findRecentCourseFile(baseUrl, token, courseId, file.name);
-    }
-    if (!meta || !meta.id) throw new Error('Uploaded but could not locate the file in Canvas');
-    // Force a fresh /files/{id} read so `uuid` is present — needed to build
-    // a publicly-fetchable download URL for Colab and similar consumers.
-    try {
-      const full = await canvasFetch(baseUrl, token, `/files/${meta.id}`);
-      if (full && full.id) return full;
-    } catch { /* fall through with whatever we have */ }
-    return meta;
+    if (meta && typeof meta === 'object' && meta.id) return meta;
+    const found = await findRecentCourseFile(baseUrl, token, courseId, file.name);
+    if (found) return found;
+    throw new Error('Uploaded but could not locate the file in Canvas');
   },
 
   /** Download the published schedule JSON from Canvas course files. */
