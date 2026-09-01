@@ -77,9 +77,9 @@ export default function renderScheduleHtml(s, courseTitle) {
     if (title) {
       const dayCount = pubModuleDayCounts[d];
       const dayCountHtml = dayCount != null
-        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 400; color: ${v('muted', L.muted)}; margin-left: 8px; letter-spacing: 0.02em; text-transform: none;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
+        ? ` <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 400; color: ${v('muted', L.muted)}; margin-left: 8px; letter-spacing: 0.02em; text-transform: none;">(${dayCount} ${dayCount === 1 ? 'day' : 'days'})</span>`
         : '';
-      rows += `<tr><th scope="colgroup" colspan="2" style="padding: 4px 12px 4px 10px; text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; border-top: 1px solid ${v('ink-blue', L.inkBlue)}; border-bottom: 1px solid ${v('ink-blue', L.inkBlue)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)};">${title}${dayCountHtml}</th></tr>`;
+      rows += `<tr><th scope="colgroup" colspan="2" style="padding: 4px 12px 4px 10px; text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; border-top: 1px solid ${v('ink-blue', L.inkBlue)}; border-bottom: 1px solid ${v('ink-blue', L.inkBlue)}; border-left: 3px solid ${v('ink-blue', L.inkBlue)};">${title}${dayCountHtml}</th></tr>`;
     }
 
     const weekBorderStyle = isNewWeek ? `border-top: 2px solid ${v('border-strong', L.borderStrong)};` : '';
@@ -92,7 +92,7 @@ export default function renderScheduleHtml(s, courseTitle) {
           : (item.title || 'Untitled');
         content += `<div style="margin: 0 0 8px 0; background: ${v('paper', L.paper)}; border: 1px solid #000; border-left: 3px solid ${v('ink-blue', L.inkBlue)}; border-radius: 3px; padding: 10px 12px;">
           <div style="margin-bottom: 4px;">
-            <span style="font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
+            <span style="font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: ${v('ink-blue', L.inkBlue)}; background: ${v('ink-blue-soft', L.inkBlueSoft)}; padding: 2px 6px; border-radius: 2px;">Assignment</span>
             ${item.points ? `<span style="font-family: ui-monospace, monospace; font-size: 12px; color: ${v('ink-mid', L.inkMid)}; margin-left: 6px;">${item.points} pts</span>` : ''}
           </div>
           <div style="font-family: Georgia, serif; font-size: 15px; font-weight: 500; color: ${v('ink', L.ink)}; line-height: 1.3;">${titleHtml}</div>
@@ -126,10 +126,10 @@ export default function renderScheduleHtml(s, courseTitle) {
     <table style="width: 100%; border-collapse: collapse; border: 1px solid ${v('border', L.border)}; border-radius: 6px; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; color: ${v('ink', L.ink)};">
       <caption style="text-align: left; padding: 12px 16px 6px; font-family: Georgia, serif; font-size: 18px; font-weight: 600; color: ${v('ink', L.ink)}; caption-side: top;">
         ${courseTitle || 'Course Schedule'}
-        ${s.publishedAt ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: ${v('muted', L.muted)}; letter-spacing: 0.08em; text-transform: uppercase;">
+        ${s.publishedAt ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 12px; font-weight: 400; color: ${v('muted', L.muted)}; letter-spacing: 0.08em; text-transform: uppercase;">
           Published ${new Date(s.publishedAt).toLocaleString()}
         </div>` : ''}
-        ${s.icalUrl ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 11px; font-weight: 400; color: ${v('ink-mid', L.inkMid)};">
+        ${s.icalUrl ? `<div style="margin-top:6px; font-family: ui-monospace, monospace; font-size: 12px; font-weight: 400; color: ${v('ink-mid', L.inkMid)};">
           <a href="${s.icalUrl}" style="color: ${v('ink-blue', L.inkBlue)}; text-decoration: underline;">${s.icalUrl.includes('/calendar/') ? 'Subscribe to calendar (auto-updates)' : 'Download calendar (.ics)'}</a>
           ${s.icalUrl.includes('/calendar/')
             ? '— add this URL to Google, Apple, or Outlook Calendar to receive schedule updates automatically'
