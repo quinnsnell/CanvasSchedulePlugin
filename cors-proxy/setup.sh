@@ -38,8 +38,16 @@ else
 fi
 echo "Using: ${WRANGLER[*]}"
 
-if ! "${WRANGLER[@]}" whoami >/dev/null 2>&1; then
-  echo "ERROR: not logged in. Run: ${WRANGLER[*]} login" >&2
+# Run whoami with full output visible. The first `pnpm dlx wrangler` call
+# may print a "approve build scripts" prompt for esbuild/workerd; we want
+# the user to see it and hit `a` + Enter, not have it silently hang. Same
+# for the OAuth browser-login URL if they're not logged in.
+echo "Checking wrangler login…"
+if ! "${WRANGLER[@]}" whoami; then
+  echo "" >&2
+  echo "ERROR: wrangler whoami failed. If not logged in, run:" >&2
+  echo "  ${WRANGLER[*]} login" >&2
+  echo "and then re-run this script." >&2
   exit 1
 fi
 
