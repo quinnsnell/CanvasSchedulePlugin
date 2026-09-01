@@ -31,9 +31,10 @@ const CORS_HEADERS = {
 // Canvas began enforcing a User-Agent header on API requests in 2026.
 // Requests without a UA get a 403 "Not Authorized — you have not provided
 // a valid user agent" HTML response. Send an identifying UA on every
-// worker-originated fetch to Canvas. See
-// https://community.canvaslms.com/t5/Canvas-LMS-Blog/Enforcing-User-Agent-Header-for-Canvas-API-Requests/ba-p/658205
-const CANVAS_USER_AGENT = 'CanvasSchedulePlanner/1.0 (+https://github.com/quinnsnell/CanvasSchedulePlugin)';
+// worker-originated fetch to Canvas. Keep it plain — including a URL or
+// parentheses triggers WAF/bot-detection rules at some Canvas installs.
+// See https://community.canvaslms.com/t5/Canvas-LMS-Blog/Enforcing-User-Agent-Header-for-Canvas-API-Requests/ba-p/658205
+const CANVAS_USER_AGENT = 'CanvasSchedulePlanner/1.0';
 
 // Cap KV writes at 512 KB. iCal feeds for a normal semester run well under
 // 50 KB; anything over half a meg is almost certainly junk or abuse.
