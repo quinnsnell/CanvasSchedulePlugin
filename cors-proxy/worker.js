@@ -142,6 +142,10 @@ async function canUserManageCourse(canvasHost, courseId, authHeader) {
       headers: {
         Authorization: authHeader,
         'User-Agent': CANVAS_USER_AGENT,
+        // Canvas's edge rejects with 406 Not Acceptable when the request
+        // omits an Accept header (Cloudflare's default fetch sends none).
+        // Ask for JSON explicitly.
+        Accept: 'application/json',
       },
     });
   } catch (e) {
