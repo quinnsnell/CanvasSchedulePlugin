@@ -100,7 +100,12 @@ async function handleCalendar(request, env, url) {
     if (!/^Bearer\s+\S+/i.test(auth)) {
       return new Response('Missing Authorization: Bearer <canvas-pat>', { status: 401, headers: CORS_HEADERS });
     }
-    const check = await canUserManageCourse(canvasHost, courseId, auth);
+    // Forward the caller's browser UA — BYU's WAF passes handleProxy
+    // (which carries the browser UA verbatim) but 406s the same URL when
+    // sent with our minimalist worker UA. Reusing the browser's UA gets
+    // past whatever the WAF is fingerprinting.
+    const callerUA = request.headers.get('User-Agent') || CANVAS_USER_AGENT;
+    const check = await canUserManageCourse(canvasHost, courseId, auth, callerUA);
     if (!check.ok) {
       return new Response(
         `Forbidden — Canvas PAT does not have teacher-level access to this course\n\n` +
@@ -134,20 +139,16 @@ async function handleCalendar(request, env, url) {
  * Returns { ok, detail }; detail describes what was seen so a 403
  * response can surface it for debugging.
  */
-async function canUserManageCourse(canvasHost, courseId, authHeader) {
+async function canUserManageCourse(canvasHost, courseId, authHeader, userAgent) {
   const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions&include[]=enrollments`;
   let resp;
   try {
     resp = await fetch(apiUrl, {
       headers: {
         Authorization: authHeader,
-        'User-Agent': CANVAS_USER_AGENT,
-        // BYU's edge (Apache + WAF) returns 406 when the header set
-        // doesn't look like a normal browser/curl request. Use "*/*" so
-        // Apache's mod_negotiation doesn't try to serve a specific
-        // filesystem representation, and include Accept-Language for
-        // completeness — the browser-proxied calls that already work
-        // carry both.
+        // Use the caller's browser UA when provided — some Canvas edges
+        // (BYU's WAF, notably) 406 requests with a minimalist worker UA.
+        'User-Agent': userAgent || CANVAS_USER_AGENT,
         Accept: '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
       },
