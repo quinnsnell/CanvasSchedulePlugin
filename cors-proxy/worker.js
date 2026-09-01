@@ -28,6 +28,13 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
 };
 
+// Canvas began enforcing a User-Agent header on API requests in 2026.
+// Requests without a UA get a 403 "Not Authorized — you have not provided
+// a valid user agent" HTML response. Send an identifying UA on every
+// worker-originated fetch to Canvas. See
+// https://community.canvaslms.com/t5/Canvas-LMS-Blog/Enforcing-User-Agent-Header-for-Canvas-API-Requests/ba-p/658205
+const CANVAS_USER_AGENT = 'CanvasSchedulePlanner/1.0 (+https://github.com/quinnsnell/CanvasSchedulePlugin)';
+
 // Cap KV writes at 512 KB. iCal feeds for a normal semester run well under
 // 50 KB; anything over half a meg is almost certainly junk or abuse.
 const MAX_ICAL_BYTES = 512 * 1024;
@@ -130,7 +137,12 @@ async function canUserManageCourse(canvasHost, courseId, authHeader) {
   const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions&include[]=enrollments`;
   let resp;
   try {
-    resp = await fetch(apiUrl, { headers: { Authorization: authHeader } });
+    resp = await fetch(apiUrl, {
+      headers: {
+        Authorization: authHeader,
+        'User-Agent': CANVAS_USER_AGENT,
+      },
+    });
   } catch (e) {
     return { ok: false, detail: `network error: ${e.message}` };
   }
