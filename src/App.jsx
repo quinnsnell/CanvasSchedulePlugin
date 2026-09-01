@@ -1028,10 +1028,14 @@ export default function ClassPlannerApp() {
       } else if (feedResult && !feedResult.ok) {
         // Surface the actual reason so misconfigured workers / auth
         // problems don't fail silently. The fallback Canvas link still
-        // works, just without the auto-update behavior.
+        // works, just without the auto-update behavior. Include the
+        // response body's first line in the toast so the user doesn't
+        // have to open dev tools to diagnose.
         // eslint-disable-next-line no-console
         console.warn('[iCal feed]', feedResult);
-        showToast(`Published, but calendar feed: ${feedResult.reason}`, 'err');
+        const bodySnippet = (feedResult.body || '').split('\n').filter(Boolean)[0] || '';
+        const suffix = bodySnippet ? ` — ${bodySnippet.slice(0, 160)}` : '';
+        showToast(`Published, but calendar feed: ${feedResult.reason}${suffix}`, 'err');
       } else {
         showToast('Published schedule to Canvas');
       }
