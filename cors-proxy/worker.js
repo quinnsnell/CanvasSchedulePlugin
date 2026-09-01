@@ -100,12 +100,11 @@ async function handleCalendar(request, env, url) {
     if (!/^Bearer\s+\S+/i.test(auth)) {
       return new Response('Missing Authorization: Bearer <canvas-pat>', { status: 401, headers: CORS_HEADERS });
     }
-    // Forward the caller's browser UA — BYU's WAF passes handleProxy
-    // (which carries the browser UA verbatim) but 406s the same URL when
-    // sent with our minimalist worker UA. Reusing the browser's UA gets
-    // past whatever the WAF is fingerprinting.
-    const callerUA = request.headers.get('User-Agent') || CANVAS_USER_AGENT;
-    const check = await canUserManageCourse(canvasHost, courseId, auth, callerUA);
+    // Forward the caller's full header set — BYU's WAF fingerprints on
+    // more than just UA (Sec-Fetch-*, Accept-Encoding, etc.). handleProxy
+    // works because it carries the browser's full request; the Canvas
+    // permission check needs the same treatment.
+    const check = await canUserManageCourse(canvasHost, courseId, auth, request.headers);
     if (!check.ok) {
       return new Response(
         `Forbidden — Canvas PAT does not have teacher-level access to this course\n\n` +
@@ -139,20 +138,26 @@ async function handleCalendar(request, env, url) {
  * Returns { ok, detail }; detail describes what was seen so a 403
  * response can surface it for debugging.
  */
-async function canUserManageCourse(canvasHost, courseId, authHeader, userAgent) {
+async function canUserManageCourse(canvasHost, courseId, authHeader, callerHeaders) {
   const apiUrl = `https://${canvasHost}/api/v1/courses/${courseId}?include[]=permissions&include[]=enrollments`;
+  // Rebuild the header set from the browser request, stripping only the
+  // ones that must be re-derived for the new destination (Host) or that
+  // would confuse Canvas (Content-Type — this is a GET). Force our own
+  // Authorization in case the caller sent something different.
+  const outboundHeaders = new Headers(callerHeaders || {});
+  outboundHeaders.delete('host');
+  outboundHeaders.delete('content-type');
+  outboundHeaders.delete('content-length');
+  outboundHeaders.set('Authorization', authHeader);
+  if (!outboundHeaders.has('User-Agent')) {
+    outboundHeaders.set('User-Agent', CANVAS_USER_AGENT);
+  }
+  if (!outboundHeaders.has('Accept')) {
+    outboundHeaders.set('Accept', '*/*');
+  }
   let resp;
   try {
-    resp = await fetch(apiUrl, {
-      headers: {
-        Authorization: authHeader,
-        // Use the caller's browser UA when provided — some Canvas edges
-        // (BYU's WAF, notably) 406 requests with a minimalist worker UA.
-        'User-Agent': userAgent || CANVAS_USER_AGENT,
-        Accept: '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
+    resp = await fetch(apiUrl, { headers: outboundHeaders });
   } catch (e) {
     return { ok: false, detail: `network error: ${e.message}` };
   }
