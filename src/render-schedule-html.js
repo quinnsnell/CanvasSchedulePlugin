@@ -107,7 +107,10 @@ export default function renderScheduleHtml(s, courseTitle) {
     if (holidayLabel) {
       content = `<div style="padding: 4px 0; font-family: ui-monospace, monospace; font-size: 12px; color: ${v('ox', L.ox)}; text-transform: uppercase; letter-spacing: 0.1em;">${holidayLabel}</div>`;
     } else if (!content) {
-      content = `<div style="padding: 4px 0; font-size: 0;"><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);">No items scheduled</span></div>`;
+      // Screen-reader-only "No items scheduled" text. Clipped to 1px so
+      // it's invisible; font-size stays at 12px so Pope Tech doesn't
+      // flag it as "very small text".
+      content = `<span style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; font-size: 12px;">No items scheduled</span>`;
     }
 
     const rowShadow = shadedWeek ? 'inset 0 1px 0 rgba(255,255,255,0.7)' : 'inset 0 1px 0 rgba(0,0,0,0.04)';
