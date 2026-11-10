@@ -4,3 +4,5 @@ dist/
 .vite/
 .local/
 .wrangler/
+.env
+.env.local
