@@ -945,7 +945,7 @@ export default function ClassPlannerApp() {
         state.canvas.connected && state.canvas.token && state.canvas.baseUrl && state.canvas.courseId) {
       try {
         const due = new Date(`${toDate}T${item.dueTime || '23:59'}:00`).toISOString();
-        await CanvasAPI.setDueDate(state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, due);
+        await CanvasAPI.moveDueDate(state.canvas.baseUrl, state.canvas.token, state.canvas.courseId, item.canvasId, due);
         didCanvasSync = true;
       } catch (e) { canvasError = e.message; }
     }

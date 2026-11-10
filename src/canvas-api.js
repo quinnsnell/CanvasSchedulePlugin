@@ -100,6 +100,23 @@ export function proxyUrl(absoluteUrl, baseUrl) {
     : absoluteUrl;
 }
 
+// ── Date shifting (for moveDueDate) ────────────────────────────
+
+/** Whole calendar days (local time) from one ISO datetime to another. */
+function dayDelta(fromISO, toISO) {
+  const a = new Date(fromISO); const b = new Date(toISO);
+  const da = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const db = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((db - da) / 86400000);
+}
+
+/** Shift an ISO datetime by N local calendar days, keeping its local time (DST-safe). */
+function shiftDays(iso, days) {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
 // ── Low-level fetch wrapper ────────────────────────────────────
 
 async function canvasFetch(baseUrl, token, path, opts = {}) {
@@ -341,6 +358,68 @@ export const CanvasAPI = {
       method: 'PUT',
       body: JSON.stringify({ assignment: { due_at: dueAtISO } }),
     }),
+
+  /**
+   * Move an assignment to a new due date the way an instructor expects:
+   * a plain `due_at` PUT only changes the base date, so Canvas keeps
+   * showing the old date when the assignment has "Assign To" overrides
+   * (per-section or the new-UI "Everyone" override, common on quizzes),
+   * and it rejects the PUT when the new date falls outside the
+   * availability window. This shifts the base dates, every override and
+   * (for Classic Quizzes) the quiz record by the same number of days,
+   * keeping each date's time of day. Returns the updated assignment.
+   */
+  moveDueDate: async (b, t, c, a, newDueISO) => {
+    const cur = await canvasFetch(b, t, `/courses/${c}/assignments/${a}?include[]=overrides`);
+    const overrides = cur.overrides || [];
+    const oldDue = cur.due_at || overrides.find((o) => o.due_at)?.due_at || null;
+    const days = oldDue ? dayDelta(oldDue, newDueISO) : 0;
+    const shift = (iso) => (iso && days ? shiftDays(iso, days) : iso);
+
+    const base = { due_at: newDueISO };
+    if (cur.lock_at) base.lock_at = shift(cur.lock_at);
+    if (cur.unlock_at) base.unlock_at = shift(cur.unlock_at);
+    // Never leave the due date outside the window, even if the old
+    // dates were already inconsistent.
+    const newMs = new Date(newDueISO).getTime();
+    if (base.lock_at && new Date(base.lock_at).getTime() < newMs) base.lock_at = newDueISO;
+    if (base.unlock_at && new Date(base.unlock_at).getTime() > newMs) base.unlock_at = null;
+
+    const updated = await canvasFetch(b, t, `/courses/${c}/assignments/${a}`, {
+      method: 'PUT',
+      body: JSON.stringify({ assignment: base }),
+    });
+
+    if (days) {
+      for (const o of overrides) {
+        const patch = {};
+        for (const k of ['due_at', 'lock_at', 'unlock_at']) {
+          if (o[k]) patch[k] = shift(o[k]);
+        }
+        if (Object.keys(patch).length === 0) continue;
+        await canvasFetch(b, t, `/courses/${c}/assignments/${a}/overrides/${o.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ assignment_override: patch }),
+        });
+      }
+    }
+
+    // Classic Quizzes keep their own copy of the dates; update it too so
+    // the quiz page and student view agree with the assignment.
+    if (cur.quiz_id && !cur.is_quiz_lti_assignment) {
+      const q = { due_at: newDueISO, lock_at: base.lock_at ?? null, unlock_at: base.unlock_at ?? null };
+      await canvasFetch(b, t, `/courses/${c}/quizzes/${cur.quiz_id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ quiz: q }),
+      }).catch(() => {}); // assignment PUT already synced the base dates
+    }
+
+    // Compare to the minute: Canvas rewrites 11:59:00 PM as 11:59:59 PM.
+    if (updated.due_at && Math.abs(new Date(updated.due_at).getTime() - newMs) >= 60000) {
+      throw new Error(`Canvas kept due date ${updated.due_at}`);
+    }
+    return updated;
+  },
 
   /** Rename an assignment. */
   renameAssignment: (b, t, c, a, name) =>
